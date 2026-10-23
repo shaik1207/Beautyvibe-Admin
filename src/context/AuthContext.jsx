@@ -19,6 +19,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // onAuthStateChanged acts as an observer for Firebase session state
     const unsubscribe = onAuthStateChanged(
       auth,
       (firebaseUser) => {
@@ -26,32 +27,33 @@ export function AuthProvider({ children }) {
         setLoading(false);
       },
       (error) => {
-        console.error(
-          "Firebase authentication error:",
-          error
-        );
-
+        console.error("Firebase authentication error:", error);
         setUser(null);
         setLoading(false);
       }
     );
 
-    return unsubscribe;
+    return () => unsubscribe();
   }, []);
 
   const logout = async () => {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+      setUser(null);
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
+
+  const value = {
+    user,
+    loading,
+    logout,
+    isAuthenticated: Boolean(user),
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        logout,
-        isAuthenticated: Boolean(user),
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
@@ -61,9 +63,7 @@ export function useAuth() {
   const context = useContext(AuthContext);
 
   if (!context) {
-    throw new Error(
-      "useAuth must be used inside AuthProvider"
-    );
+    throw new Error("useAuth must be used inside AuthProvider");
   }
 
   return context;
