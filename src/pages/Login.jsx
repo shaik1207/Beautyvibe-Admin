@@ -48,11 +48,16 @@ export default function Login() {
         if (name.trim().length < 2) return notify("Please enter your full name.", "error");
         if (password.length < 6) return notify("Password must contain at least 6 characters.", "error");
 
+        // CRITICAL FIX: Send 'phone' instead of 'mobile' to match backend model controller
         await API.post("/api/auth/register", {
-          name, email: normalizedEmail, mobile, password, role: "admin"
+          name, 
+          email: normalizedEmail, 
+          phone: mobile || "+91 98765 43210", 
+          password, 
+          role: "admin"
         });
         
-        notify("Admin account created! Please sign in.");
+        notify("Admin account created successfully! Please sign in.");
         setMode("login");
       } else {
         const res = await API.post("/api/auth/login", {
@@ -60,26 +65,30 @@ export default function Login() {
           password
         });
 
-        // Robust payload extraction supporting both direct and nested response structures
+        // Robust payload extraction supporting nested Sequelize structures
         const responseData = res.data?.data || res.data || {};
         const role = responseData.role || res.data?.role;
         const token = responseData.token || res.data?.token;
-
-        if (role !== "admin") {
-          throw new Error("Access Denied. Admin privileges required.");
-        }
 
         if (!token) {
           throw new Error("Authentication token missing from server response.");
         }
 
+        if (role && role !== "admin") {
+          throw new Error("Access Denied. Admin privileges required.");
+        }
+
         // Save token using the exact key required by Axios interceptors
         localStorage.setItem("beautyvibe_admin_token", token);
         notify("Welcome back to BeautyVibe Admin.");
-        navigate("/dashboard");
+        
+        setTimeout(() => {
+          navigate("/dashboard", { replace: true });
+        }, 400);
       }
     } catch (error) {
-      notify(error.response?.data?.message || error.message || "Authentication failed", "error");
+      const errorMsg = error.response?.data?.message || error.message || "Authentication failed";
+      notify(errorMsg, "error");
     } finally {
       setLoading(false);
     }
