@@ -34,21 +34,32 @@ export default function Login() {
   };
 
   const handleEmailSubmit = async (event) => {
+    // CRITICAL: Prevent browser default form refresh submission behavior
     event.preventDefault();
+    event.stopPropagation();
+
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail || !password) {
-      return notify("Enter your email and password.", "error");
+      notify("Enter your email and password.", "error");
+      return;
     }
 
     setLoading(true);
 
     try {
       if (mode === "register") {
-        if (name.trim().length < 2) return notify("Please enter your full name.", "error");
-        if (password.length < 6) return notify("Password must contain at least 6 characters.", "error");
+        if (name.trim().length < 2) {
+          notify("Please enter your full name.", "error");
+          setLoading(false);
+          return;
+        }
+        if (password.length < 6) {
+          notify("Password must contain at least 6 characters.", "error");
+          setLoading(false);
+          return;
+        }
 
-        // CRITICAL FIX: Send 'phone' instead of 'mobile' to match backend model controller
         await API.post("/api/auth/register", {
           name, 
           email: normalizedEmail, 
@@ -82,9 +93,10 @@ export default function Login() {
         localStorage.setItem("beautyvibe_admin_token", token);
         notify("Welcome back to BeautyVibe Admin.");
         
+        // Clean navigation without page reload
         setTimeout(() => {
           navigate("/dashboard", { replace: true });
-        }, 400);
+        }, 300);
       }
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.message || "Authentication failed";
