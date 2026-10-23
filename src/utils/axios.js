@@ -7,20 +7,20 @@ const getBaseUrl = () => {
     const match = rawUrl.match(/(https?:\/\/[^\s)\]'"]+)/);
     if (match) return match[0];
   }
-  // Fallback to localhost for local admin development
   return 'http://localhost:5000';
 };
 
 const API = axios.create({
   baseURL: getBaseUrl(),
-  // withCredentials is left off since you are using Bearer tokens in headers
 });
 
-// Intercept every request to inject the correct admin bearer token
+// Intercept every request to inject the correct bearer token
 API.interceptors.request.use(
   (config) => {
+    // Check all possible token keys used across your app
     const token = 
       localStorage.getItem('beautyvibe_admin_token') || 
+      localStorage.getItem('beautyvibe_user_token') || 
       localStorage.getItem('token');
 
     if (token) {
@@ -36,7 +36,9 @@ API.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      console.warn("Admin API Request unauthorized (401). Please check admin session.");
+      console.warn("API Request unauthorized (401). Clearing invalid session.");
+      // Optional: Clear corrupted tokens on 401
+      // localStorage.removeItem('beautyvibe_admin_token');
     }
     return Promise.reject(error);
   }

@@ -34,7 +34,6 @@ export default function Login() {
   };
 
   const handleEmailSubmit = async (event) => {
-    // CRITICAL: Prevent browser default form refresh submission behavior
     event.preventDefault();
     event.stopPropagation();
 
@@ -69,6 +68,7 @@ export default function Login() {
         });
         
         notify("Admin account created successfully! Please sign in.");
+        setLoading(false);
         setMode("login");
       } else {
         const res = await API.post("/api/auth/login", {
@@ -76,10 +76,12 @@ export default function Login() {
           password
         });
 
-        // Robust payload extraction supporting nested Sequelize structures
-        const responseData = res.data?.data || res.data || {};
-        const role = responseData.role || res.data?.role;
-        const token = responseData.token || res.data?.token;
+        // Thoroughly unwrap response structures from Express/Sequelize
+        const payload = res.data || {};
+        const userData = payload.data || payload.user || payload;
+        
+        const token = payload.token || userData.token;
+        const role = userData.role || payload.role;
 
         if (!token) {
           throw new Error("Authentication token missing from server response.");
@@ -89,7 +91,7 @@ export default function Login() {
           throw new Error("Access Denied. Admin privileges required.");
         }
 
-        // Save token using the exact key required by Axios interceptors
+        // Save token securely under the exact key checked by Axios interceptors
         localStorage.setItem("beautyvibe_admin_token", token);
         notify("Welcome back to BeautyVibe Admin.");
         
@@ -101,7 +103,6 @@ export default function Login() {
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.message || "Authentication failed";
       notify(errorMsg, "error");
-    } finally {
       setLoading(false);
     }
   };
