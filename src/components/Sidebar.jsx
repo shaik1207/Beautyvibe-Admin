@@ -12,20 +12,14 @@ import {
   ChartNoAxesCombined,
   FileText,
   Settings,
-  CircleHelp,
   LogOut,
   ChevronDown,
   ChevronRight,
-  ChevronLeft,
   Menu,
   X,
-  Sparkles,
-  ShieldCheck,
   PanelLeftClose,
   PanelLeftOpen,
   UserRound,
-  Bell,
-  Check,
 } from "lucide-react";
 
 const navigation = [
@@ -113,7 +107,7 @@ export default function Sidebar({
     admin?.name ||
     admin?.username ||
     admin?.email?.split("@")[0] ||
-    "Admin";
+    "Shaik Sameer";
 
   const adminEmail = admin?.email || "admin@beautyvibe.com";
 
@@ -199,11 +193,18 @@ export default function Sidebar({
           <Link
             to="/"
             onClick={handleNavigation}
-            className="flex min-w-0 items-center gap-3"
+            className="flex min-w-0 items-center gap-3 group"
           >
-            {/* Logo */}
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#C56E4E] text-white shadow-sm shadow-[#C56E4E]/20">
-              <Sparkles size={21} strokeWidth={2.2} />
+            {/* Logo from public/primary.png */}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl overflow-hidden bg-[#FCF9F6] border border-[#EADBD2] shadow-sm transition-transform duration-200 group-hover:scale-105">
+              <img
+                src="/primary.png"
+                alt="BeautyVibe Logo"
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
             </div>
 
             {!collapsed && (
@@ -224,7 +225,7 @@ export default function Sidebar({
             <button
               onClick={() => setCollapsed(true)}
               title="Collapse sidebar"
-              className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#9A8E86] transition hover:bg-[#F7F4F1] hover:text-[#55443B] lg:flex"
+              className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#9A8E86] transition hover:bg-[#F7F4F1] hover:text-[#55443B] lg:flex cursor-pointer"
             >
               <PanelLeftClose size={17} strokeWidth={1.7} />
             </button>
@@ -233,7 +234,7 @@ export default function Sidebar({
           {/* Mobile close */}
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#8C7A70] hover:bg-[#F7F4F1] lg:hidden"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#8C7A70] hover:bg-[#F7F4F1] lg:hidden cursor-pointer"
             aria-label="Close sidebar"
           >
             <X size={19} />
@@ -244,7 +245,7 @@ export default function Sidebar({
             <button
               onClick={() => setCollapsed(false)}
               title="Expand sidebar"
-              className="absolute -right-3 top-[29px] hidden h-7 w-7 items-center justify-center rounded-full border border-[#EAE4DF] bg-white text-[#8C7A70] shadow-sm transition hover:bg-[#F8F4F1] lg:flex"
+              className="absolute -right-3 top-[29px] hidden h-7 w-7 items-center justify-center rounded-full border border-[#EAE4DF] bg-white text-[#8C7A70] shadow-sm transition hover:bg-[#F8F4F1] lg:flex cursor-pointer"
             >
               <PanelLeftOpen size={14} />
             </button>
@@ -349,7 +350,7 @@ export default function Sidebar({
             className={`
               group flex h-[42px] w-full items-center rounded-[10px]
               text-[#62564F] transition-all duration-200
-              hover:bg-[#F8F6F4] hover:text-[#A95D40]
+              hover:bg-[#F8F6F4] hover:text-[#A95D40] cursor-pointer
               ${
                 collapsed
                   ? "justify-center"
@@ -409,32 +410,11 @@ export default function Sidebar({
             </div>
           )}
 
-          {/* Help */}
-          <button
-            onClick={() => navigate("/settings")}
-            title={collapsed ? "Get help" : undefined}
-            className={`group mt-1 flex h-[42px] w-full items-center rounded-[10px] text-[#62564F] transition hover:bg-[#F8F6F4] hover:text-[#A95D40] ${
-              collapsed
-                ? "justify-center"
-                : "gap-3 px-3"
-            }`}
-          >
-            <CircleHelp
-              size={18}
-              strokeWidth={1.7}
-              className="shrink-0 text-[#80736B] group-hover:text-[#C56E4E]"
-            />
-
-            {!collapsed && (
-              <span className="text-[12.5px]">Get help</span>
-            )}
-          </button>
-
           {/* Logout */}
           <button
             onClick={() => setLogoutConfirm(true)}
             title={collapsed ? "Log out" : undefined}
-            className={`group flex h-[42px] w-full items-center rounded-[10px] text-[#62564F] transition hover:bg-[#FFF0ED] hover:text-[#C34D3F] ${
+            className={`group mt-1 flex h-[42px] w-full items-center rounded-[10px] text-[#62564F] transition hover:bg-[#FFF0ED] hover:text-[#C34D3F] cursor-pointer ${
               collapsed
                 ? "justify-center"
                 : "gap-3 px-3"
@@ -456,7 +436,7 @@ export default function Sidebar({
         <div className="shrink-0 border-t border-[#F0ECE9] p-3">
           <button
             onClick={() => setProfileOpen(!profileOpen)}
-            className={`flex w-full items-center rounded-[11px] p-2 transition hover:bg-[#F8F6F4] ${
+            className={`flex w-full items-center rounded-[11px] p-2 transition hover:bg-[#F8F6F4] cursor-pointer ${
               collapsed
                 ? "justify-center"
                 : "gap-3"
@@ -494,7 +474,7 @@ export default function Sidebar({
 
           {/* Profile popover */}
           {profileOpen && !collapsed && (
-            <div className="mb-1 mt-2 rounded-xl border border-[#EEE7E2] bg-white p-3 shadow-[0_8px_30px_rgba(48,39,34,0.08)]">
+            <div className="mb-1 mt-2 rounded-xl border border-[#EEE7E2] bg-white p-3 shadow-[0_8px_30px_rgba(48,39,34,0.08)] animate-in fade-in zoom-in-95 duration-150">
               <div className="flex items-center gap-2">
                 <UserRound
                   size={15}
@@ -510,7 +490,7 @@ export default function Sidebar({
 
               <button
                 onClick={() => setLogoutConfirm(true)}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[12px] text-[#B84E43] transition hover:bg-[#FFF0ED]"
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[12px] text-[#B84E43] transition hover:bg-[#FFF0ED] cursor-pointer"
               >
                 <LogOut size={15} />
                 Sign out of account
@@ -522,8 +502,8 @@ export default function Sidebar({
 
       {/* Logout confirmation modal */}
       {logoutConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 p-4 backdrop-blur-[3px]">
-          <div className="w-full max-w-[360px] rounded-[20px] border border-[#F0E8E2] bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 p-4 backdrop-blur-[3px] animate-in fade-in duration-200">
+          <div className="w-full max-w-[360px] rounded-[20px] border border-[#F0E8E2] bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FFF0ED] text-[#C34D3F]">
               <LogOut size={22} />
             </div>
@@ -539,14 +519,14 @@ export default function Sidebar({
             <div className="mt-6 grid grid-cols-2 gap-3">
               <button
                 onClick={() => setLogoutConfirm(false)}
-                className="h-10 rounded-xl border border-[#EAE3DD] text-[12px] font-medium text-[#62564F] transition hover:bg-[#F8F6F4]"
+                className="h-10 rounded-xl border border-[#EAE3DD] text-[12px] font-medium text-[#62564F] transition hover:bg-[#F8F6F4] cursor-pointer"
               >
                 Cancel
               </button>
 
               <button
                 onClick={handleLogout}
-                className="h-10 rounded-xl bg-[#C34D3F] text-[12px] font-medium text-white transition hover:bg-[#AD4034]"
+                className="h-10 rounded-xl bg-[#C34D3F] text-[12px] font-medium text-white transition hover:bg-[#AD4034] cursor-pointer"
               >
                 Yes, log out
               </button>

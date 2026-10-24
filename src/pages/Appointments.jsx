@@ -41,6 +41,11 @@ import {
   ScanLine,
   ChevronFirst,
   ChevronLast,
+  Navigation,
+  Compass,
+  Car,
+  ExternalLink,
+  Home
 } from "lucide-react";
 
 const SOCKET_URL =
@@ -148,6 +153,7 @@ function normalizeAppointment(item) {
       item.service?.serviceName ||
       "Beauty Service",
     type: item.type || "SALON",
+    address: item.address || item.location || "ICMR Campus, Hyderabad",
     date: item.date || "",
     time: item.time || "",
     datetime: formatDate(item.date, item.time),
@@ -349,6 +355,7 @@ export default function Appointments() {
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [activeBooking, setActiveBooking] = useState(null);
+  const [trackingBooking, setTrackingBooking] = useState(null);
   const [toast, setToast] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
 
@@ -510,6 +517,7 @@ export default function Appointments() {
         item.service,
         item.assignedStaff,
         item.type,
+        item.address,
       ]
         .join(" ")
         .toLowerCase();
@@ -587,7 +595,7 @@ export default function Appointments() {
       );
 
       setOpenDropdownId(null);
-      showToast("Expert assigned successfully. QR scan pass is now unlocked.");
+      showToast("Expert assigned successfully. Live map route & QR scan pass are now unlocked.");
     } catch (error) {
       console.error("Staff assignment failed:", error);
       showToast(error.response?.data?.message || "Unable to assign staff.", "error");
@@ -822,11 +830,11 @@ export default function Appointments() {
                 <tr className="border-b border-[#F0EAE5] bg-[#FCFBFA] text-[10px] font-semibold uppercase tracking-[1.1px] text-[#9B8D83]">
                   <th className="px-5 py-4 w-[15%]">Booking</th>
                   <th className="px-4 py-4 w-[20%]">Customer</th>
-                  <th className="px-4 py-4 w-[20%]">Service</th>
+                  <th className="px-4 py-4 w-[18%]">Service</th>
                   <th className="px-4 py-4 w-[15%]">Schedule</th>
                   <th className="px-4 py-4 w-[10%]">Status</th>
-                  <th className="px-4 py-4 w-[20%]">Assigned expert</th>
-                  <th className="px-5 py-4 w-[15%] text-right">Actions</th>
+                  <th className="px-4 py-4 w-[18%]">Assigned expert</th>
+                  <th className="px-5 py-4 w-[14%] text-right">Actions</th>
                 </tr>
               </thead>
 
@@ -857,6 +865,7 @@ export default function Appointments() {
                       const isAccepted = booking.status === "Accepted";
                       const isCompleted = booking.status === "Completed";
                       const isRejected = booking.status === "Rejected";
+                      const isHomeService = booking.type === "HOME";
 
                       return (
                         <motion.tr
@@ -870,7 +879,7 @@ export default function Appointments() {
                           <td className="px-5 py-4 align-middle">
                             <p className="font-mono text-xs font-semibold text-[#302722]">{booking.id}</p>
                             <p className="mt-1 text-[10px] text-[#A09288]">
-                              {booking.type === "HOME" ? "Home service" : "Salon visit"}
+                              {isHomeService ? "Home service" : "Salon visit"}
                             </p>
                           </td>
 
@@ -887,10 +896,12 @@ export default function Appointments() {
                           </td>
 
                           <td className="px-4 py-4 align-middle">
-                            <p className="max-w-[170px] truncate text-xs font-medium text-[#51443B]" title={booking.service}>{booking.service}</p>
+                            <p className="max-w-[150px] truncate text-xs font-medium text-[#51443B]" title={booking.service}>{booking.service}</p>
                             <div className="mt-1.5 flex items-center gap-1 text-[10px] text-[#A09288]">
-                              {booking.type === "HOME" ? <MapPin size={11} /> : <Sparkles size={11} />}
-                              {booking.type === "HOME" ? "At home" : "In salon"}
+                              {isHomeService ? <MapPin size={11} /> : <Sparkles size={11} />}
+                              <span className="truncate" title={isHomeService ? booking.address : "Salon location"}>
+                                {isHomeService ? booking.address : "In salon"}
+                              </span>
                             </div>
                           </td>
 
@@ -909,7 +920,7 @@ export default function Appointments() {
                             {isPending ? (
                               <span className="text-[11px] text-[#A09288]">-</span>
                             ) : isCompleted ? (
-                              <span className="inline-flex max-w-[190px] items-center gap-1.5 text-xs text-emerald-700">
+                              <span className="inline-flex max-w-[170px] items-center gap-1.5 text-xs text-emerald-700">
                                 <ShieldCheck size={14} />
                                 <span className="truncate">{booking.assignedStaff || "Unassigned"}</span>
                               </span>
@@ -917,7 +928,7 @@ export default function Appointments() {
                               <span className="text-[11px] text-[#A09288]">-</span>
                             ) : (
                               // isAccepted Workflow: Assign Expert
-                              <div className="relative w-full max-w-[200px]">
+                              <div className="relative w-full max-w-[180px]">
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -936,7 +947,7 @@ export default function Appointments() {
                                       initial={{ opacity: 0, y: 6, scale: 0.98 }}
                                       animate={{ opacity: 1, y: 0, scale: 1 }}
                                       exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                                      className="absolute left-0 top-full mt-2 w-[260px] rounded-xl border border-[#EEE7E2] bg-white p-2 shadow-xl"
+                                      className="absolute left-0 top-full mt-2 w-[240px] rounded-xl border border-[#EEE7E2] bg-white p-2 shadow-xl z-50"
                                     >
                                       <p className="px-2 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
                                         SELECT REAL EXPERT
@@ -961,7 +972,7 @@ export default function Appointments() {
 
                           <td className="px-5 py-4 text-right align-middle">
                             {isPending && (
-                              <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => updateStatus(booking, "Accepted")}
@@ -985,29 +996,46 @@ export default function Appointments() {
                             )}
 
                             {isAccepted && (
-                              <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {isHomeService && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setTrackingBooking(booking)}
+                                    disabled={!booking.assignedStaff}
+                                    title={!booking.assignedStaff ? "Assign expert first" : "Track route"}
+                                    className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition ${
+                                      booking.assignedStaff
+                                        ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
+                                        : "cursor-not-allowed bg-stone-100 text-stone-400"
+                                    }`}
+                                  >
+                                    <Navigation size={13} />
+                                    Route
+                                  </button>
+                                )}
+
                                 <button
                                   type="button"
                                   onClick={() => openScanner(booking)}
                                   disabled={!booking.assignedStaff}
                                   title={!booking.assignedStaff ? "Assign an expert first to unlock scanner" : "Scan customer pass"}
-                                  className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-[11px] font-medium transition ${
+                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition ${
                                     booking.assignedStaff
-                                      ? "bg-[#302722] text-white hover:bg-[#B66B4B] shadow-sm cursor-pointer"
-                                      : "bg-[#EADBD2] text-[#8D7F75] cursor-not-allowed opacity-60"
+                                      ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
+                                      : "cursor-not-allowed bg-stone-200 text-stone-500"
                                   }`}
                                 >
-                                  <QrCode size={14} />
-                                  Scan Pass
+                                  <QrCode size={13} />
+                                  Scan
                                 </button>
                               </div>
                             )}
 
                             {isCompleted && (
-                              <span className="inline-flex items-center justify-end gap-1.5 w-full text-[11px] font-medium text-emerald-700">
-                                <CheckCircle2 size={14} />
-                                Service completed
-                              </span>
+                              <div className="flex items-center justify-end gap-1 text-[11px] font-medium text-emerald-700">
+                                <CheckCircle2 size={13} />
+                                Done
+                              </div>
                             )}
 
                             {isRejected && (
@@ -1043,6 +1071,7 @@ export default function Appointments() {
                   const isAccepted = booking.status === "Accepted";
                   const isCompleted = booking.status === "Completed";
                   const isRejected = booking.status === "Rejected";
+                  const isHomeService = booking.type === "HOME";
 
                   return (
                     <motion.article
@@ -1070,8 +1099,8 @@ export default function Appointments() {
                         <div className="min-w-0">
                           <p className="text-[10px] text-[#A09288]">Service</p>
                           <p className="mt-1 truncate text-xs font-medium text-[#51443B]">{booking.service}</p>
-                          <p className="mt-1 text-[10px] text-[#A09288]">
-                            {booking.type === "HOME" ? "Home service" : "Salon visit"}
+                          <p className="mt-1 truncate text-[10px] text-[#A09288]">
+                            {isHomeService ? `🏠 ${booking.address}` : "✨ In salon"}
                           </p>
                         </div>
 
@@ -1134,18 +1163,34 @@ export default function Appointments() {
                               {booking.assignedStaff ? "Change Staff" : "Assign Staff"}
                             </button>
 
+                            {isHomeService && (
+                              <button
+                                type="button"
+                                onClick={() => setTrackingBooking(booking)}
+                                disabled={!booking.assignedStaff}
+                                className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition ${
+                                  booking.assignedStaff
+                                    ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
+                                    : "cursor-not-allowed bg-stone-100 text-stone-400"
+                                }`}
+                              >
+                                <Navigation size={14} />
+                                Route
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               onClick={() => openScanner(booking)}
                               disabled={!booking.assignedStaff}
-                              className={`inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium transition ${
+                              className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition ${
                                 booking.assignedStaff
                                   ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
                                   : "cursor-not-allowed bg-stone-200 text-stone-500"
                               }`}
                             >
                               <QrCode size={15} />
-                              Scan QR
+                              Scan
                             </button>
                           </>
                         )}
@@ -1220,6 +1265,16 @@ export default function Appointments() {
         )}
       </AnimatePresence>
 
+      {/* Swiggy-Style Live Route Tracking Modal */}
+      <AnimatePresence>
+        {trackingBooking && (
+          <LiveRouteTrackingModal
+            booking={trackingBooking}
+            onClose={() => setTrackingBooking(null)}
+          />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {toast && (
           <motion.div
@@ -1244,6 +1299,124 @@ export default function Appointments() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// --- SWIGGY-STYLE LIVE ROUTE TRACKING MODAL ---
+function LiveRouteTrackingModal({ booking, onClose }) {
+  const destinationAddress = encodeURIComponent(booking.address || "Customer Home Address");
+  const googleMapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destinationAddress}`;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-[#241B17]/70 backdrop-blur-sm p-0 sm:p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 30, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 30, scale: 0.98 }}
+        transition={{ duration: 0.22 }}
+        className="w-full max-w-lg overflow-hidden rounded-t-[28px] border border-[#EEE7E2] bg-white shadow-2xl sm:rounded-[28px]"
+      >
+        <div className="flex items-center justify-between border-b border-[#F0EAE5] px-5 py-4 sm:px-6 bg-[#FCFBFA]">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+              <Navigation size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[1.5px] text-blue-600">
+                Swiggy-Style Live Tracking
+              </p>
+              <h2 className="mt-0.5 text-base font-semibold text-[#302722]">
+                Route to Customer House
+              </h2>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EEE7E2] text-[#8D7F75] transition hover:bg-white hover:text-[#302722]"
+            aria-label="Close tracking"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Simulated Swiggy Map View */}
+        <div className="relative h-[280px] w-full bg-[#E8F0F2] overflow-hidden">
+          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" className="absolute inset-0 opacity-60">
+            <defs>
+              <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#CBD5E1" strokeWidth="1"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#gridPattern)" />
+            {/* Dashed Route Path */}
+            <path d="M 70,140 Q 180,60 260,160 T 400,100" fill="none" stroke="#3B82F6" strokeWidth="5" strokeDasharray="8 6" className="animate-pulse" />
+          </svg>
+
+          {/* Moving Expert Marker */}
+          <motion.div
+            animate={{ x: [0, 80, 160, 220], y: [0, -20, 30, -10] }}
+            transition={{ repeat: Infinity, duration: 7, ease: "easeInOut" }}
+            className="absolute top-[100px] left-[60px] bg-[#302722] text-white p-2.5 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center"
+          >
+            <Car size={20} className="text-[#E5A024]" />
+          </motion.div>
+
+          {/* Customer Destination Pin */}
+          <div className="absolute bottom-[60px] right-[70px] bg-red-600 text-white p-2.5 rounded-full shadow-lg border-2 border-white z-10">
+            <Home size={20} />
+          </div>
+
+          {/* Floating ETA Pill */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full shadow-md border border-[#EEE7E2] text-center z-10 flex items-center gap-2">
+            <Compass size={15} className="text-blue-600 animate-spin" />
+            <span className="text-xs font-bold text-[#302722]">Expert arriving in <span className="text-blue-600">12 mins</span> (2.8 km)</span>
+          </div>
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-4">
+          <div className="rounded-2xl border border-[#EEE7E2] bg-[#FCFBFA] p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Assigned Expert</span>
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">On Route</span>
+            </div>
+            <p className="text-sm font-semibold text-[#302722]">{booking.assignedStaff || "Professional Stylist"}</p>
+            <div className="flex items-start gap-2 pt-1 text-xs text-[#62564D]">
+              <MapPin size={15} className="text-[#B66B4B] shrink-0 mt-0.5" />
+              <span className="font-medium leading-relaxed">{booking.address}</span>
+            </div>
+          </div>
+
+          <a
+            href={googleMapsDirectionsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider transition shadow-md flex items-center justify-center gap-2"
+          >
+            Open in Google Maps <ExternalLink size={15} />
+          </a>
+        </div>
+
+        <div className="flex gap-3 border-t border-[#F0EAE5] px-5 py-4 sm:px-6 bg-[#FCFBFA]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 w-full rounded-xl border border-[#E9E1DA] text-xs font-medium text-[#67574D] transition hover:bg-white"
+          >
+            Close tracking
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
