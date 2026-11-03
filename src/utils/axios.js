@@ -20,6 +20,12 @@ const getBaseUrl = () => {
     }
   }
 
+  // In production, fallback directly to the live Render backend instead of localhost
+  if (import.meta.env.PROD) {
+    console.warn("⚠️ VITE_API_BASE_URL is missing in Vercel. Defaulting to live Render backend.");
+    return "https://beautyvibe-backend.onrender.com";
+  }
+
   // Local development fallback
   return "http://localhost:5000";
 };
@@ -61,7 +67,7 @@ const waitForAuthReady = () => {
 
 const API = axios.create({
   baseURL: getBaseUrl(),
-  timeout: 30000,
+  timeout: 60000, // Increased to 60s to safely handle Render cold starts
   withCredentials: true,
   headers: {
     Accept: "application/json",
@@ -117,13 +123,27 @@ API.interceptors.request.use(
 );
 
 // --------------------------------------------------
-// RESPONSE INTERCEPTOR
+// RESPONSE INTERCEPTOR WITH COLD-START AUTO-RETRY
 // --------------------------------------------------
 
 API.interceptors.response.use(
   (response) => response,
 
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Check if it's a network error or timeout (likely a Render cold start) and we haven't retried yet
+    const isColdStartOrNetworkError = !error.response || error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+
+    if (isColdStartOrNetworkError && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+      console.warn("⏳ Render backend is waking up from a cold start. Retrying admin request in 5 seconds...");
+      
+      // Wait 5 seconds for Render to spin up, then retry the request automatically
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      return API(originalRequest);
+    }
+
     if (error.response) {
       const status = error.response.status;
       const message = error.response.data?.message || error.message;
@@ -146,9 +166,6 @@ API.interceptors.response.use(
           localStorage.removeItem("beautyvibe_admin_token");
           localStorage.removeItem("beautyvibe_user_token");
           localStorage.removeItem("token");
-          
-          // Optional: Force redirect to admin login if session drops entirely
-          // window.location.href = "/admin/login";
         }
       }
     } else {
