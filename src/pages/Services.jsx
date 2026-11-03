@@ -1,5 +1,13 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
+
 import { motion, AnimatePresence } from "framer-motion";
+
 import {
   Sparkles,
   Plus,
@@ -14,15 +22,20 @@ import {
   Search,
   AlertCircle,
   LoaderCircle,
-  Image as ImageIcon,
   RefreshCw,
   Upload,
-  CheckCircle,
   XCircle,
   Info,
+  TriangleAlert,
+  Image as ImageIcon,
 } from "lucide-react";
+
 import { io } from "socket.io-client";
 import API from "./../utils/axios";
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
 
 const categoriesList = [
   "All",
@@ -43,8 +56,22 @@ const DEFAULT_BENEFITS = [
   "Finishing expert advice",
 ];
 
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15MB
+
+const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+];
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
 const getServiceId = (service) => {
   const id = service?.id ?? service?._id;
+
   return id === undefined || id === null ? "" : String(id);
 };
 
@@ -54,37 +81,78 @@ const toBoolean = (value, fallback = false) => {
   }
 
   if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value === 1;
+  if (typeof value === "number") return value !== 0;
 
-  return ["true", "1", "yes"].includes(
-    String(value).toLowerCase().trim()
-  );
+  const normalized = String(value).trim().toLowerCase();
+
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+
+  return fallback;
 };
 
-const normalizeService = (service) => ({
-  ...service,
-  id: getServiceId(service),
-  name: service?.name ?? service?.title ?? "Untitled Service",
-  category: service?.category ?? "Skin & Face",
-  price: Number(service?.price ?? 0),
-  duration: service?.duration ?? "60 mins",
-  isTrending: toBoolean(
-    service?.isTrending ?? service?.is_trending,
-    false
-  ),
-  discountApplicable: toBoolean(
-    service?.discountApplicable ?? service?.discount_applicable,
-    true
-  ),
-  image: service?.image || DEFAULT_IMAGE,
-  description:
-    service?.description ??
-    service?.desc ??
-    "Professional doorstep salon ritual.",
-  benefits: Array.isArray(service?.benefits)
-    ? service.benefits
-    : DEFAULT_BENEFITS,
-});
+// BULLETPROOF IMAGE URL RESOLVER FOR FRONTEND
+const resolveFrontendImageUrl = (rawImage) => {
+  if (!rawImage || typeof rawImage !== "string" || !rawImage.trim()) {
+    return DEFAULT_IMAGE;
+  }
+
+  const trimmed = rawImage.trim();
+
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:")
+  ) {
+    return trimmed;
+  }
+
+  const backendBase =
+    import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+  
+  const cleanBase = backendBase.replace(/\/+$/, "");
+  const cleanPath = trimmed.replace(/^\/+/, "");
+
+  return `${cleanBase}/${cleanPath}`;
+};
+
+const normalizeService = (service) => {
+  return {
+    ...service,
+
+    id: getServiceId(service),
+
+    name: service?.name ?? service?.title ?? "Untitled Service",
+
+    category: service?.category ?? "Skin & Face",
+
+    price: Number(service?.price ?? 0),
+
+    duration: service?.duration ?? "60 mins",
+
+    isTrending: toBoolean(
+      service?.isTrending ?? service?.is_trending,
+      false
+    ),
+
+    discountApplicable: toBoolean(
+      service?.discountApplicable ?? service?.discount_applicable,
+      true
+    ),
+
+    image: resolveFrontendImageUrl(service?.image),
+
+    description:
+      service?.description ??
+      service?.desc ??
+      "Professional doorstep salon ritual.",
+
+    benefits: Array.isArray(service?.benefits)
+      ? service.benefits
+      : DEFAULT_BENEFITS,
+  };
+};
 
 const extractServices = (response) => {
   const body = response?.data;
@@ -97,7 +165,6 @@ const extractServices = (response) => {
 
   if (Array.isArray(data)) return data;
 
-  // Some APIs return { data: { rows: [...] } }.
   if (Array.isArray(data?.rows)) return data.rows;
 
   return [];
@@ -116,29 +183,35 @@ const extractSavedService = (response) => {
 };
 
 const getErrorMessage = (error, fallback) => {
+  const status = error?.response?.status;
+
   const serverMessage =
     error?.response?.data?.message ??
     error?.response?.data?.error;
 
   if (serverMessage) return serverMessage;
 
-  if (error?.response?.status === 401) {
+  if (status === 400) {
+    return "Please check the information you entered.";
+  }
+
+  if (status === 401) {
     return "Your session has expired. Please sign in again.";
   }
 
-  if (error?.response?.status === 403) {
+  if (status === 403) {
     return "You do not have permission to perform this action.";
   }
 
-  if (error?.response?.status === 404) {
+  if (status === 404) {
     return "The service or API endpoint was not found.";
   }
 
-  if (error?.response?.status === 413) {
-    return "The image or request is too large. Choose a smaller image.";
+  if (status === 413) {
+    return "The image is too large. Choose an image smaller than 15 MB.";
   }
 
-  if (error?.response?.status >= 500) {
+  if (status >= 500) {
     return "The server encountered an error. Please try again.";
   }
 
@@ -146,132 +219,93 @@ const getErrorMessage = (error, fallback) => {
     return "Cannot reach the server. Check your backend connection.";
   }
 
-  return serverMessage || error?.message || fallback;
+  return error?.message || fallback;
 };
 
-/**
- * Compress local images to a JPEG data URL.
- * This reduces request size but does not replace backend persistence.
- */
-const compressImage = (file) =>
-  new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith("image/")) {
-      reject(new Error("Please select a valid image file."));
-      return;
-    }
+const validateImage = (file) => {
+  if (!file) {
+    throw new Error("Please select an image.");
+  }
 
-    // Reject exceptionally large source files before decoding.
-    if (file.size > 15 * 1024 * 1024) {
-      reject(
-        new Error("Choose an image smaller than 15 MB.")
-      );
-      return;
-    }
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    throw new Error("Choose JPG, PNG, WebP or GIF images only.");
+  }
 
-    const reader = new FileReader();
+  if (file.size > MAX_IMAGE_SIZE) {
+    throw new Error("Image size must be 15 MB or smaller.");
+  }
 
-    reader.onerror = () =>
-      reject(new Error("Could not read the selected image."));
+  return true;
+};
 
-    reader.onload = () => {
-      const image = new Image();
-
-      image.onerror = () =>
-        reject(new Error("This image could not be opened."));
-
-      image.onload = () => {
-        try {
-          const maxDimension = 1400;
-          const ratio = Math.min(
-            1,
-            maxDimension / Math.max(image.width, image.height)
-          );
-
-          const canvas = document.createElement("canvas");
-
-          canvas.width = Math.max(
-            1,
-            Math.round(image.width * ratio)
-          );
-
-          canvas.height = Math.max(
-            1,
-            Math.round(image.height * ratio)
-          );
-
-          const context = canvas.getContext("2d");
-
-          if (!context) {
-            reject(new Error("Image processing is unavailable."));
-            return;
-          }
-
-          context.fillStyle = "#ffffff";
-          context.fillRect(0, 0, canvas.width, canvas.height);
-
-          context.drawImage(
-            image,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-          );
-
-          const result = canvas.toDataURL("image/jpeg", 0.78);
-
-          if (result.length > 3_500_000) {
-            reject(
-              new Error(
-                "This image is still too large. Choose a smaller image."
-              )
-            );
-            return;
-          }
-
-          resolve(result);
-        } catch {
-          reject(new Error("Failed to process this image."));
-        }
-      };
-
-      image.src = reader.result;
-    };
-
-    reader.readAsDataURL(file);
-  });
+/* =========================================================
+   MAIN COMPONENT
+========================================================= */
 
 export default function Services() {
+  /* ------------------ Service data ------------------ */
+
   const [servicesList, setServicesList] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  /* ------------------ UI state ------------------ */
+
   const [isModalOpen, setIsModalOpen] = useState(false);
+
   const [socketConnected, setSocketConnected] = useState(false);
+
   const [toast, setToast] = useState(null);
 
+  const [dialog, setDialog] = useState(null); // Custom popup dialog state for delete confirmation
+
   const [searchQuery, setSearchQuery] = useState("");
+
   const [selectedCategory, setSelectedCategory] = useState("All");
 
+  /* ------------------ Form state ------------------ */
+
   const [editingId, setEditingId] = useState(null);
+
   const [isSaving, setIsSaving] = useState(false);
+
   const [deletingId, setDeletingId] = useState(null);
+
   const [modalError, setModalError] = useState("");
 
   const [serviceName, setServiceName] = useState("");
+
   const [serviceCategory, setServiceCategory] =
     useState("Skin & Face");
+
   const [servicePrice, setServicePrice] = useState("");
+
   const [serviceDuration, setServiceDuration] = useState("60 mins");
+
   const [serviceImage, setServiceImage] = useState("");
+
+  const [selectedImageFile, setSelectedImageFile] = useState(null);
+
   const [imageInputMode, setImageInputMode] = useState("upload");
+
   const [serviceDescription, setServiceDescription] = useState("");
+
   const [isTrending, setIsTrending] = useState(false);
+
   const [discountApplicable, setDiscountApplicable] = useState(true);
-  const [imageProcessing, setImageProcessing] = useState(false);
+
+  /* ------------------ References ------------------ */
 
   const fileInputRef = useRef(null);
+
   const toastTimerRef = useRef(null);
-  const imageGenerationRef = useRef(0);
+
+  const imagePreviewRef = useRef("");
+
+  /* =========================================================
+     TOAST
+  ========================================================= */
 
   const showToast = useCallback((message, type = "success") => {
     if (toastTimerRef.current) {
@@ -294,182 +328,272 @@ export default function Services() {
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);
       }
+
+      if (imagePreviewRef.current) {
+        URL.revokeObjectURL(imagePreviewRef.current);
+      }
     };
   }, []);
 
-  const fetchServices = useCallback(async (options = {}) => {
-    const { silent = false } = options;
+  /* =========================================================
+     IMAGE PREVIEW MANAGEMENT
+  ========================================================= */
 
-    try {
-      if (silent) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      const response = await API.get("/api/services");
-      const rawServices = extractServices(response);
-
-      const normalized = rawServices
-        .map(normalizeService)
-        .filter((service) => service.id !== "");
-
-      // An empty API result must display an empty catalog.
-      setServicesList(normalized);
-
-      return normalized;
-    } catch (error) {
-      console.error("Failed to fetch services:", error);
-
-      showToast(
-        getErrorMessage(error, "Could not load services."),
-        "error"
-      );
-
-      throw error;
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const setLocalImagePreview = (file) => {
+    if (imagePreviewRef.current) {
+      URL.revokeObjectURL(imagePreviewRef.current);
+      imagePreviewRef.current = "";
     }
-  }, [showToast]);
+
+    const previewUrl = URL.createObjectURL(file);
+
+    imagePreviewRef.current = previewUrl;
+
+    setServiceImage(previewUrl);
+  };
+
+  const clearLocalImagePreview = () => {
+    if (imagePreviewRef.current) {
+      URL.revokeObjectURL(imagePreviewRef.current);
+      imagePreviewRef.current = "";
+    }
+  };
+
+  /* =========================================================
+     FETCH SERVICES
+  ========================================================= */
+
+  const fetchServices = useCallback(
+    async (options = {}) => {
+      const { silent = false } = options;
+
+      try {
+        if (silent) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+
+        const response = await API.get("/api/services");
+
+        const rawServices = extractServices(response);
+
+        const normalized = rawServices
+          .map(normalizeService)
+          .filter((service) => service.id !== "");
+
+        setServicesList(normalized);
+
+        return normalized;
+      } catch (error) {
+        console.error("Failed to fetch services:", error);
+
+        showToast(
+          getErrorMessage(error, "Could not load services."),
+          "error"
+        );
+
+        throw error;
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [showToast]
+  );
+
+  /* =========================================================
+     SOCKET CONNECTION
+  ========================================================= */
 
   useEffect(() => {
     fetchServices().catch(() => {});
 
     const socketUrl =
-      import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+      import.meta.env.VITE_SOCKET_URL ||
+      "http://localhost:5000";
 
     const socket = io(socketUrl, {
       transports: ["websocket", "polling"],
       reconnection: true,
     });
 
-    socket.on("connect", () => setSocketConnected(true));
-    socket.on("disconnect", () => setSocketConnected(false));
+    socket.on("connect", () => {
+      setSocketConnected(true);
+    });
 
-    const syncFromServer = () => {
+    socket.on("disconnect", () => {
+      setSocketConnected(false);
+    });
+
+    const syncServices = () => {
       fetchServices({ silent: true }).catch(() => {});
     };
 
-    socket.on("serviceAdded", syncFromServer);
-    socket.on("serviceUpdated", syncFromServer);
-    socket.on("serviceDeleted", syncFromServer);
+    socket.on("serviceAdded", syncServices);
+    socket.on("serviceUpdated", syncServices);
+    socket.on("serviceDeleted", syncServices);
 
     return () => {
       socket.off("connect");
       socket.off("disconnect");
-      socket.off("serviceAdded", syncFromServer);
-      socket.off("serviceUpdated", syncFromServer);
-      socket.off("serviceDeleted", syncFromServer);
+
+      socket.off("serviceAdded", syncServices);
+      socket.off("serviceUpdated", syncServices);
+      socket.off("serviceDeleted", syncServices);
+
       socket.disconnect();
     };
   }, [fetchServices]);
 
+  /* =========================================================
+     RESET FORM
+  ========================================================= */
+
   const resetForm = () => {
-    imageGenerationRef.current += 1;
+    clearLocalImagePreview();
 
     setEditingId(null);
+
     setServiceName("");
     setServiceCategory("Skin & Face");
     setServicePrice("");
     setServiceDuration("60 mins");
+
     setServiceImage("");
+    setSelectedImageFile(null);
+
     setImageInputMode("upload");
+
     setServiceDescription("");
+
     setIsTrending(false);
     setDiscountApplicable(true);
+
     setModalError("");
-    setImageProcessing(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
+  /* =========================================================
+     OPEN CREATE MODAL
+  ========================================================= */
+
   const handleOpenCreateModal = () => {
     resetForm();
     setIsModalOpen(true);
   };
 
+  /* =========================================================
+     OPEN EDIT MODAL
+  ========================================================= */
+
   const handleOpenEditModal = (service) => {
     resetForm();
 
     setEditingId(service.id);
+
     setServiceName(service.name);
+
     setServiceCategory(service.category);
+
     setServicePrice(String(service.price));
+
     setServiceDuration(service.duration);
-    setServiceImage(service.image === DEFAULT_IMAGE ? "" : service.image);
-    setImageInputMode(
-      service.image?.startsWith("data:image/")
-        ? "upload"
-        : "url"
+
+    setServiceImage(
+      service.image === DEFAULT_IMAGE ? "" : service.image
     );
+
+    setSelectedImageFile(null);
+
+    setImageInputMode("url");
+
     setServiceDescription(service.description);
+
     setIsTrending(service.isTrending);
+
     setDiscountApplicable(service.discountApplicable);
+
     setModalError("");
 
     setIsModalOpen(true);
   };
 
-  const handleFileSelect = async (event) => {
-    const file = event.target.files?.[0];
+  /* =========================================================
+     IMAGE UPLOAD
+  ========================================================= */
 
-    if (!file) return;
-
-    const requestId = ++imageGenerationRef.current;
-
-    setImageProcessing(true);
-    setModalError("");
-
+  const applySelectedImage = (file) => {
     try {
-      const dataUrl = await compressImage(file);
+      validateImage(file);
 
-      if (requestId === imageGenerationRef.current) {
-        setServiceImage(dataUrl);
-      }
+      setModalError("");
+
+      setSelectedImageFile(file);
+
+      setLocalImagePreview(file);
+
+      setImageInputMode("upload");
     } catch (error) {
-      setModalError(error.message || "Could not process image.");
-    } finally {
-      if (requestId === imageGenerationRef.current) {
-        setImageProcessing(false);
+      setModalError(error.message);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
       }
     }
   };
 
-  const handleDrop = async (event) => {
+  const handleFileSelect = (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    applySelectedImage(file);
+  };
+
+  const handleDrop = (event) => {
     event.preventDefault();
 
     const file = event.dataTransfer.files?.[0];
 
     if (!file) return;
 
-    const requestId = ++imageGenerationRef.current;
+    applySelectedImage(file);
+  };
 
-    setImageProcessing(true);
-    setModalError("");
+  const handleRemoveImage = () => {
+    clearLocalImagePreview();
 
-    try {
-      const dataUrl = await compressImage(file);
+    setServiceImage("");
 
-      if (requestId === imageGenerationRef.current) {
-        setServiceImage(dataUrl);
-      }
-    } catch (error) {
-      setModalError(error.message || "Could not process image.");
-    } finally {
-      if (requestId === imageGenerationRef.current) {
-        setImageProcessing(false);
-      }
+    setSelectedImageFile(null);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
+  const handleImageUrlChange = (event) => {
+    clearLocalImagePreview();
+
+    setSelectedImageFile(null);
+
+    setServiceImage(event.target.value);
+  };
+
+  /* =========================================================
+     SAVE SERVICE
+  ========================================================= */
+
   const handleSaveService = async (event) => {
     event.preventDefault();
+
     setModalError("");
 
-    if (isSaving || imageProcessing) return;
+    if (isSaving) return;
 
     if (!serviceName.trim()) {
       setModalError("Please enter the service name.");
@@ -490,31 +614,54 @@ export default function Services() {
       return;
     }
 
-    if (editingId !== null && editingId !== "") {
-      if (!servicesList.some((item) => item.id === String(editingId))) {
-        setModalError(
-          "This service is no longer in the current catalog. Refresh and try again."
-        );
+    if (
+      editingId !== null &&
+      !servicesList.some(
+        (item) => String(item.id) === String(editingId)
+      )
+    ) {
+      setModalError(
+        "This service is no longer in the current catalog. Refresh and try again."
+      );
+      return;
+    }
+
+    if (selectedImageFile) {
+      try {
+        validateImage(selectedImageFile);
+      } catch (error) {
+        setModalError(error.message);
         return;
       }
     }
 
     setIsSaving(true);
 
-    const payload = {
-      name: serviceName.trim(),
-      title: serviceName.trim(),
-      category: serviceCategory,
-      price: Number(servicePrice),
-      duration: serviceDuration.trim(),
-      isTrending,
-      discountApplicable,
-      image: serviceImage.trim() || DEFAULT_IMAGE,
-      description:
-        serviceDescription.trim() ||
-        "Professional doorstep salon ritual tailored to your comfort.",
-      benefits: DEFAULT_BENEFITS,
-    };
+    const formData = new FormData();
+
+    formData.append("name", serviceName.trim());
+    formData.append("title", serviceName.trim());
+    formData.append("category", serviceCategory);
+    formData.append("price", String(Number(servicePrice)));
+    formData.append("duration", serviceDuration.trim());
+    formData.append("isTrending", String(isTrending));
+    formData.append("discountApplicable", String(discountApplicable));
+    formData.append(
+      "description",
+      serviceDescription.trim() ||
+        "Professional doorstep salon ritual tailored to your comfort."
+    );
+    formData.append("benefits", JSON.stringify(DEFAULT_BENEFITS));
+
+    if (selectedImageFile) {
+      formData.append(
+        "image",
+        selectedImageFile,
+        selectedImageFile.name
+      );
+    } else if (serviceImage && !serviceImage.startsWith("blob:")) {
+      formData.append("imageUrl", serviceImage.trim());
+    }
 
     const isEditing = editingId !== null && editingId !== "";
 
@@ -522,96 +669,98 @@ export default function Services() {
       if (isEditing) {
         const id = encodeURIComponent(String(editingId));
 
-        // Do not update the UI optimistically. Wait for the server.
-        await API.put(`/api/services/${id}`, payload);
+        await API.put(`/api/services/${id}`, formData);
 
-        // Re-fetch to ensure the database contains the updated record.
         await fetchServices({ silent: true });
 
         setIsModalOpen(false);
+
         resetForm();
 
         showToast(
-          `"${payload.name}" updated successfully.`,
+          `"${serviceName.trim()}" updated successfully.`,
           "success"
         );
       } else {
-        const response = await API.post("/api/services", payload);
+        const response = await API.post(
+          "/api/services",
+          formData
+        );
+
         const savedService = extractSavedService(response);
 
-        // A successful create should return the persisted service or ID.
         const savedId = getServiceId(savedService);
 
-        if (!savedId) {
-          // The POST might have succeeded, but the response shape
-          // did not confirm the saved ID. Reload and verify.
-          await fetchServices({ silent: true });
+        const refreshedServices = await fetchServices({
+          silent: true,
+        });
 
-          const current = await API.get("/api/services");
-          const serverServices = extractServices(current).map(
-            normalizeService
-          );
-
-          const match = serverServices.some(
-            (item) =>
-              item.name === payload.name &&
-              Number(item.price) === payload.price
-          );
-
-          if (!match) {
-            throw new Error(
-              "The server did not return a saved service ID. Verify your create API response."
+        const savedRecordExists = savedId
+          ? refreshedServices.some(
+              (item) => String(item.id) === savedId
+            )
+          : refreshedServices.some(
+              (item) =>
+                item.name === serviceName.trim() &&
+                Number(item.price) === Number(servicePrice)
             );
-          }
 
-          setServicesList(serverServices);
-        } else {
-          await fetchServices({ silent: true });
+        if (!savedRecordExists) {
+          throw new Error(
+            "The server accepted the request, but the saved service could not be verified. Refresh the catalog and check your database."
+          );
         }
 
         setIsModalOpen(false);
+
         resetForm();
 
         showToast(
-          `"${payload.name}" created successfully.`,
+          `"${serviceName.trim()}" created successfully.`,
           "success"
         );
       }
     } catch (error) {
       console.error("Service save failed:", error);
 
-      setModalError(
-        getErrorMessage(error, "Could not save the service.")
+      const message = getErrorMessage(
+        error,
+        "Could not save the service."
       );
 
-      showToast(
-        getErrorMessage(error, "Could not save the service."),
-        "error"
-      );
+      setModalError(message);
+
+      showToast(message, "error");
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDeleteService = async (service) => {
+  /* =========================================================
+     DELETE SERVICE & CONFIRMATION DIALOG
+  ========================================================= */
+
+  const requestDeleteService = (service) => {
     if (deletingId !== null) return;
+    setDialog({ type: "delete", service });
+  };
 
-    const confirmed = window.confirm(
-      `Delete "${service.name}"?\n\nThis action will remove the service from the catalog if the server confirms it.`
-    );
-
-    if (!confirmed) return;
+  const confirmDeleteService = async () => {
+    const service = dialog?.service;
+    if (!service) return;
 
     setDeletingId(service.id);
+    setDialog(null);
 
     try {
       const id = encodeURIComponent(String(service.id));
 
       await API.delete(`/api/services/${id}`);
 
-      // Remove from state only after the API succeeds.
       setServicesList((previous) =>
-        previous.filter((item) => item.id !== service.id)
+        previous.filter(
+          (item) => String(item.id) !== String(service.id)
+        )
       );
 
       showToast(
@@ -629,6 +778,10 @@ export default function Services() {
       setDeletingId(null);
     }
   };
+
+  /* =========================================================
+     FILTER SERVICES
+  ========================================================= */
 
   const filteredServices = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -648,16 +801,27 @@ export default function Services() {
     });
   }, [servicesList, selectedCategory, searchQuery]);
 
+  /* =========================================================
+     IMAGE ERROR HANDLER
+  ========================================================= */
+
   const handleImageError = (event) => {
     if (event.currentTarget.src !== DEFAULT_IMAGE) {
       event.currentTarget.src = DEFAULT_IMAGE;
     }
   };
 
+  /* =========================================================
+     RENDER
+  ========================================================= */
+
   return (
     <div className="relative min-h-screen flex-1 bg-[#FCF9F6] pb-32 font-sans text-[#2D2623] selection:bg-[#C56E4E] selection:text-white">
+
       <main className="mx-auto max-w-[1440px] space-y-7 px-4 pt-6 sm:px-6 lg:px-8">
-        {/* Header */}
+
+        {/* HEADER */}
+
         <motion.section
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -676,8 +840,8 @@ export default function Services() {
             </h1>
 
             <p className="max-w-xl text-sm leading-relaxed text-[#D3C5BF]">
-              Manage your services, prices, images and offers. Changes
-              are saved through your backend API.
+              Manage your salon services, pricing, images and
+              customer-facing service catalog.
             </p>
           </div>
 
@@ -685,10 +849,15 @@ export default function Services() {
             <div className="flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-xs font-semibold">
               <span
                 className={`h-2.5 w-2.5 rounded-full ${
-                  socketConnected ? "bg-green-400" : "bg-amber-400"
+                  socketConnected
+                    ? "bg-green-400"
+                    : "bg-amber-400"
                 }`}
               />
-              {socketConnected ? "Live connection" : "Reconnecting"}
+
+              {socketConnected
+                ? "Live connection"
+                : "Reconnecting"}
             </div>
 
             <button
@@ -702,7 +871,8 @@ export default function Services() {
           </div>
         </motion.section>
 
-        {/* Filters */}
+        {/* FILTERS */}
+
         <section className="flex flex-col justify-between gap-4 rounded-3xl border border-[#EADBD2] bg-white p-4 shadow-sm lg:flex-row lg:items-center">
           <div className="flex gap-2 overflow-x-auto pb-1">
             {categoriesList.map((category) => (
@@ -722,29 +892,41 @@ export default function Services() {
           </div>
 
           <div className="flex items-center gap-2 rounded-full border border-[#EADBD2] bg-[#FCF9F6] px-4 py-3 lg:w-80">
-            <Search size={16} className="shrink-0 text-[#8C7A70]" />
+            <Search
+              size={16}
+              className="shrink-0 text-[#8C7A70]"
+            />
+
             <input
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) =>
+                setSearchQuery(event.target.value)
+              }
               placeholder="Search services..."
               className="w-full bg-transparent text-sm outline-none placeholder:text-[#A39292]"
             />
           </div>
         </section>
 
-        {/* Catalog status */}
+        {/* CATALOG STATUS */}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-[#8C7A70]">
             <strong className="text-[#2D2623]">
               {filteredServices.length}
             </strong>{" "}
-            {filteredServices.length === 1 ? "service" : "services"} found
+            {filteredServices.length === 1
+              ? "service"
+              : "services"}{" "}
+            found
           </p>
 
           <button
             type="button"
             disabled={refreshing || loading}
-            onClick={() => fetchServices({ silent: true }).catch(() => {})}
+            onClick={() =>
+              fetchServices({ silent: true }).catch(() => {})
+            }
             className="flex items-center gap-2 rounded-full border border-[#EADBD2] bg-white px-4 py-2.5 text-xs font-bold text-[#8C7A70] transition hover:border-[#C56E4E] hover:text-[#C56E4E] disabled:opacity-50"
           >
             <RefreshCw
@@ -755,20 +937,23 @@ export default function Services() {
           </button>
         </div>
 
-        {/* Loading */}
+        {/* LOADING */}
+
         {loading && servicesList.length === 0 && (
           <div className="rounded-3xl border border-[#EADBD2] bg-white py-24 text-center">
             <LoaderCircle
               size={30}
               className="mx-auto mb-3 animate-spin text-[#C56E4E]"
             />
+
             <p className="text-sm font-semibold text-[#8C7A70]">
               Loading services from the server...
             </p>
           </div>
         )}
 
-        {/* Empty state */}
+        {/* EMPTY STATE */}
+
         {!loading && filteredServices.length === 0 && (
           <div className="rounded-[2rem] border border-[#EADBD2] bg-white px-6 py-20 text-center">
             <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-[#FFF0E8] text-[#C56E4E]">
@@ -800,7 +985,8 @@ export default function Services() {
           </div>
         )}
 
-        {/* Service cards */}
+        {/* SERVICE CARDS */}
+
         <motion.section
           layout
           className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
@@ -818,7 +1004,7 @@ export default function Services() {
               >
                 <div className="relative h-52 overflow-hidden bg-[#FFF6F0]">
                   <img
-                    src={service.image || DEFAULT_IMAGE}
+                    src={service.image}
                     alt={service.name}
                     onError={handleImageError}
                     loading="lazy"
@@ -845,6 +1031,7 @@ export default function Services() {
                       }`}
                     >
                       <Percent size={11} />
+
                       {service.discountApplicable
                         ? "Discount eligible"
                         : "Fixed price"}
@@ -859,7 +1046,11 @@ export default function Services() {
                     </span>
 
                     <span className="flex items-center gap-1 rounded-lg border border-[#EADBD2] bg-[#FCF9F6] px-2.5 py-1.5 text-[11px] font-semibold text-[#8C7A70]">
-                      <Clock size={13} className="text-[#C56E4E]" />
+                      <Clock
+                        size={13}
+                        className="text-[#C56E4E]"
+                      />
+
                       {service.duration}
                     </span>
                   </div>
@@ -882,6 +1073,7 @@ export default function Services() {
                           size={14}
                           className="mt-0.5 shrink-0 text-[#C56E4E]"
                         />
+
                         <span>{benefit}</span>
                       </div>
                     ))}
@@ -903,7 +1095,9 @@ export default function Services() {
                         type="button"
                         title="Edit service"
                         aria-label={`Edit ${service.name}`}
-                        onClick={() => handleOpenEditModal(service)}
+                        onClick={() =>
+                          handleOpenEditModal(service)
+                        }
                         disabled={deletingId === service.id}
                         className="grid h-10 w-10 place-items-center rounded-xl border border-[#EADBD2] bg-[#FFF6F0] text-[#C56E4E] transition hover:bg-[#C56E4E] hover:text-white disabled:opacity-40"
                       >
@@ -914,7 +1108,9 @@ export default function Services() {
                         type="button"
                         title="Delete service"
                         aria-label={`Delete ${service.name}`}
-                        onClick={() => handleDeleteService(service)}
+                        onClick={() =>
+                          requestDeleteService(service)
+                        }
                         disabled={deletingId !== null}
                         className="grid h-10 w-10 place-items-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -936,7 +1132,8 @@ export default function Services() {
         </motion.section>
       </main>
 
-      {/* Create / Edit Drawer */}
+      {/* CREATE / EDIT DRAWER */}
+
       <AnimatePresence>
         {isModalOpen && (
           <>
@@ -946,7 +1143,9 @@ export default function Services() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => !isSaving && setIsModalOpen(false)}
+              onClick={() =>
+                !isSaving && setIsModalOpen(false)
+              }
               className="fixed inset-0 z-50 cursor-default bg-[#211815]/55 backdrop-blur-sm"
             />
 
@@ -957,9 +1156,15 @@ export default function Services() {
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
-              transition={{ type: "spring", stiffness: 300, damping: 32 }}
+              transition={{
+                type: "spring",
+                stiffness: 300,
+                damping: 32,
+              }}
               className="fixed inset-y-0 right-0 z-[60] flex w-full max-w-xl flex-col border-l border-[#EADBD2] bg-[#FCF9F6] shadow-2xl"
             >
+              {/* DRAWER HEADER */}
+
               <header className="flex items-center justify-between border-b border-[#EADBD2] bg-white px-6 py-5 sm:px-8">
                 <div>
                   <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#C56E4E]">
@@ -982,7 +1187,9 @@ export default function Services() {
 
                 <button
                   type="button"
-                  onClick={() => !isSaving && setIsModalOpen(false)}
+                  onClick={() =>
+                    !isSaving && setIsModalOpen(false)
+                  }
                   disabled={isSaving}
                   aria-label="Close"
                   className="grid h-10 w-10 place-items-center rounded-full bg-[#FFF0E8] text-[#8C7A70] hover:text-[#C56E4E] disabled:opacity-50"
@@ -990,6 +1197,8 @@ export default function Services() {
                   <X size={18} />
                 </button>
               </header>
+
+              {/* FORM */}
 
               <form
                 onSubmit={handleSaveService}
@@ -1005,9 +1214,12 @@ export default function Services() {
                         size={18}
                         className="mt-0.5 shrink-0"
                       />
+
                       <span>{modalError}</span>
                     </div>
                   )}
+
+                  {/* NAME */}
 
                   <div>
                     <label
@@ -1030,6 +1242,8 @@ export default function Services() {
                     />
                   </div>
 
+                  {/* CATEGORY AND PRICE */}
+
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label
@@ -1050,7 +1264,10 @@ export default function Services() {
                         {categoriesList
                           .filter((category) => category !== "All")
                           .map((category) => (
-                            <option key={category} value={category}>
+                            <option
+                              key={category}
+                              value={category}
+                            >
                               {category}
                             </option>
                           ))}
@@ -1081,6 +1298,8 @@ export default function Services() {
                     </div>
                   </div>
 
+                  {/* DURATION */}
+
                   <div>
                     <label
                       htmlFor="service-duration"
@@ -1101,13 +1320,15 @@ export default function Services() {
                     />
                   </div>
 
-                  {/* Image upload */}
+                  {/* IMAGE UPLOAD */}
+
                   <section className="rounded-2xl border border-[#EADBD2] bg-white p-4">
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
                         <h3 className="text-sm font-bold">
                           Service image
                         </h3>
+
                         <p className="mt-1 text-xs text-[#8C7A70]">
                           Upload an image or paste a public image URL.
                         </p>
@@ -1116,7 +1337,9 @@ export default function Services() {
                       <div className="flex rounded-xl bg-[#FCF9F6] p-1">
                         <button
                           type="button"
-                          onClick={() => setImageInputMode("upload")}
+                          onClick={() =>
+                            setImageInputMode("upload")
+                          }
                           className={`rounded-lg px-3 py-2 text-xs font-bold ${
                             imageInputMode === "upload"
                               ? "bg-[#C56E4E] text-white"
@@ -1128,7 +1351,9 @@ export default function Services() {
 
                         <button
                           type="button"
-                          onClick={() => setImageInputMode("url")}
+                          onClick={() =>
+                            setImageInputMode("url")
+                          }
                           className={`rounded-lg px-3 py-2 text-xs font-bold ${
                             imageInputMode === "url"
                               ? "bg-[#C56E4E] text-white"
@@ -1139,6 +1364,8 @@ export default function Services() {
                         </button>
                       </div>
                     </div>
+
+                    {/* IMAGE PREVIEW */}
 
                     {serviceImage && (
                       <div className="relative mb-4 h-44 overflow-hidden rounded-xl bg-[#FFF6F0]">
@@ -1151,13 +1378,7 @@ export default function Services() {
 
                         <button
                           type="button"
-                          onClick={() => {
-                            imageGenerationRef.current += 1;
-                            setServiceImage("");
-                            if (fileInputRef.current) {
-                              fileInputRef.current.value = "";
-                            }
-                          }}
+                          onClick={handleRemoveImage}
                           className="absolute right-3 top-3 flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-bold text-red-600 shadow"
                         >
                           <Trash2 size={14} />
@@ -1166,11 +1387,17 @@ export default function Services() {
                       </div>
                     )}
 
+                    {/* FILE UPLOAD */}
+
                     {imageInputMode === "upload" ? (
                       <div
-                        onDragOver={(event) => event.preventDefault()}
+                        onDragOver={(event) =>
+                          event.preventDefault()
+                        }
                         onDrop={handleDrop}
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={() =>
+                          fileInputRef.current?.click()
+                        }
                         className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#EADBD2] bg-[#FCF9F6] p-5 text-center transition hover:border-[#C56E4E]"
                       >
                         <input
@@ -1181,26 +1408,17 @@ export default function Services() {
                           className="hidden"
                         />
 
-                        {imageProcessing ? (
-                          <LoaderCircle
-                            size={24}
-                            className="mb-3 animate-spin text-[#C56E4E]"
-                          />
-                        ) : (
-                          <Upload
-                            size={24}
-                            className="mb-3 text-[#C56E4E]"
-                          />
-                        )}
+                        <Upload
+                          size={24}
+                          className="mb-3 text-[#C56E4E]"
+                        />
 
                         <p className="text-sm font-semibold">
-                          {imageProcessing
-                            ? "Preparing image..."
-                            : "Click or drag an image here"}
+                          Click or drag an image here
                         </p>
 
                         <p className="mt-1 text-xs text-[#8C7A70]">
-                          JPEG, PNG, WebP or GIF · Max source size 15 MB
+                          JPG, PNG, WebP or GIF · Maximum 15 MB
                         </p>
                       </div>
                     ) : (
@@ -1216,13 +1434,11 @@ export default function Services() {
                           id="service-image-url"
                           type="url"
                           value={
-                            serviceImage.startsWith("data:image/")
+                            serviceImage.startsWith("blob:")
                               ? ""
                               : serviceImage
                           }
-                          onChange={(event) =>
-                            setServiceImage(event.target.value)
-                          }
+                          onChange={handleImageUrlChange}
                           placeholder="https://example.com/service.jpg"
                           className="w-full rounded-xl border border-[#EADBD2] bg-[#FCF9F6] px-4 py-3 text-sm outline-none focus:border-[#C56E4E]"
                         />
@@ -1230,15 +1446,20 @@ export default function Services() {
                     )}
 
                     <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-[#8C7A70]">
-                      <Info size={15} className="mt-0.5 shrink-0" />
+                      <Info
+                        size={15}
+                        className="mt-0.5 shrink-0"
+                      />
+
                       <p>
-                        A local upload must be stored by your backend
-                        to remain available after refreshing or on
-                        another device. This component sends the
-                        compressed image data with the service request.
+                        Uploaded images are stored by your backend.
+                        The image URL is saved with the service so
+                        customers can view it on other devices.
                       </p>
                     </div>
                   </section>
+
+                  {/* DESCRIPTION */}
 
                   <div>
                     <label
@@ -1260,6 +1481,8 @@ export default function Services() {
                       className="w-full resize-y rounded-2xl border border-[#EADBD2] bg-white px-4 py-3.5 text-sm leading-relaxed outline-none focus:border-[#C56E4E]"
                     />
                   </div>
+
+                  {/* OPTIONS */}
 
                   <div className="space-y-4 rounded-2xl border border-[#EADBD2] bg-white p-4">
                     <label className="flex cursor-pointer items-center gap-3">
@@ -1294,6 +1517,8 @@ export default function Services() {
                   </div>
                 </div>
 
+                {/* FOOTER */}
+
                 <footer className="border-t border-[#EADBD2] bg-white p-5 sm:px-8">
                   <div className="flex gap-3">
                     <button
@@ -1307,7 +1532,7 @@ export default function Services() {
 
                     <button
                       type="submit"
-                      disabled={isSaving || imageProcessing}
+                      disabled={isSaving}
                       className="flex flex-[1.5] items-center justify-center gap-2 rounded-full bg-[#2D2623] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#C56E4E] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isSaving ? (
@@ -1321,6 +1546,7 @@ export default function Services() {
                       ) : (
                         <>
                           <Check size={17} />
+
                           {editingId !== null
                             ? "Save changes"
                             : "Publish service"}
@@ -1335,7 +1561,56 @@ export default function Services() {
         )}
       </AnimatePresence>
 
-      {/* Toast notifications */}
+      {/* DELETE CONFIRMATION POPUP DIALOG */}
+      <AnimatePresence>
+        {dialog?.type === "delete" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setDialog(null);
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 8 }}
+              className="w-full max-w-md rounded-[28px] bg-white border border-[#EADBD2] p-6 shadow-2xl sm:p-7"
+            >
+              <div className="mb-5 grid h-12 w-12 place-items-center rounded-2xl border border-red-200 bg-red-50 text-red-600">
+                <TriangleAlert size={23} />
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-[#2D2623]">
+                Delete this service?
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-[#8C7A70]">
+                Are you sure you want to delete <span className="font-semibold text-[#2D2623]">{dialog.service?.name}</span>? This action cannot be undone.
+              </p>
+              <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDialog(null)}
+                  className="rounded-full border border-[#EADBD2] bg-[#FCF9F6] px-5 py-3 text-sm font-semibold text-[#8C7A70] shadow-sm transition hover:bg-[#EADBD2]/40"
+                >
+                  Keep service
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteService}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-red-500"
+                >
+                  <Trash2 size={15} /> Yes, delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TOAST NOTIFICATIONS */}
+
       <div
         aria-live="polite"
         aria-atomic="true"
@@ -1345,9 +1620,21 @@ export default function Services() {
           {toast && (
             <motion.div
               key={toast.id}
-              initial={{ opacity: 0, y: 20, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.97 }}
+              initial={{
+                opacity: 0,
+                y: 20,
+                scale: 0.97,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+              }}
+              exit={{
+                opacity: 0,
+                y: 10,
+                scale: 0.97,
+              }}
               className={`flex items-start gap-3 rounded-2xl border px-4 py-4 shadow-2xl backdrop-blur-xl ${
                 toast.type === "error"
                   ? "border-red-200 bg-white text-red-700"
@@ -1357,9 +1644,15 @@ export default function Services() {
               }`}
             >
               {toast.type === "error" ? (
-                <XCircle size={20} className="mt-0.5 shrink-0 text-red-600" />
+                <XCircle
+                  size={20}
+                  className="mt-0.5 shrink-0 text-red-600"
+                />
               ) : toast.type === "info" ? (
-                <Info size={20} className="mt-0.5 shrink-0 text-blue-600" />
+                <Info
+                  size={20}
+                  className="mt-0.5 shrink-0 text-blue-600"
+                />
               ) : (
                 <CheckCircle2
                   size={20}

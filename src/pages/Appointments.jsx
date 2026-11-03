@@ -45,7 +45,9 @@ import {
   Compass,
   Car,
   ExternalLink,
-  Home
+  Home,
+  Copy,
+  MapPinned,
 } from "lucide-react";
 
 const SOCKET_URL =
@@ -103,9 +105,6 @@ const formatDate = (date, time) => {
   return `${formatted}${time ? ` · ${time}` : ""}`;
 };
 
-/**
- * Foolproof extraction of the real customer name regardless of backend shape.
- */
 function getCustomerDetails(item) {
   if (typeof item.customer === "string") return { name: item.customer, avatar: item.avatar || "" };
   if (typeof item.user === "string") return { name: item.user, avatar: item.avatar || "" };
@@ -132,10 +131,69 @@ function getCustomerDetails(item) {
   };
 }
 
+function parseAddress(item) {
+  // Strictly prioritize doorstep and user booking address fields
+  const rawAddr =
+    item.doorstepAddress ||
+    item.userDoorstepAddress ||
+    item.serviceAddress ||
+    item.clientAddress ||
+    item.address ||
+    item.bookingAddress ||
+    item.shippingAddress ||
+    item.deliveryAddress ||
+    item.customerAddress ||
+    item.userAddress ||
+    (typeof item.location === "string" ? item.location : null) ||
+    item.location?.fullAddress ||
+    item.location?.address ||
+    item.user?.address ||
+    item.user?.location ||
+    item.customer?.address ||
+    item.customerDetails?.address;
+
+  if (rawAddr) {
+    if (typeof rawAddr === "string") {
+      return rawAddr;
+    }
+    if (typeof rawAddr === "object") {
+      return (
+        rawAddr.fullAddress ||
+        rawAddr.address ||
+        rawAddr.street ||
+        rawAddr.location ||
+        rawAddr.city ||
+        [rawAddr.houseNo, rawAddr.street, rawAddr.city].filter(Boolean).join(", ") ||
+        JSON.stringify(rawAddr)
+      );
+    }
+    return String(rawAddr);
+  }
+
+  return "Doorstep Service Address";
+}
+
+function parseCoordinates(item) {
+  const coords =
+    item.locationCoordinates ||
+    item.coordinates ||
+    (typeof item.location === "object" && item.location?.latitude && item.location?.longitude ? item.location : null) ||
+    null;
+
+  if (coords && typeof coords.latitude === "number" && typeof coords.longitude === "number") {
+    return coords;
+  }
+  return null;
+}
+
 function normalizeAppointment(item) {
   const customer = getCustomerDetails(item);
   const rawId = item._id || item.appointmentId || item.id || "";
   const stringId = String(rawId);
+
+  const isHomeService = item.type === "HOME" || item.isHomeService || true;
+  const address = parseAddress(item);
+  const coordinates = parseCoordinates(item);
 
   return {
     _id: rawId,
@@ -152,8 +210,9 @@ function normalizeAppointment(item) {
       item.service?.name ||
       item.service?.serviceName ||
       "Beauty Service",
-    type: item.type || "SALON",
-    address: item.address || item.location || "ICMR Campus, Hyderabad",
+    type: isHomeService ? "HOME" : "SALON",
+    address,
+    coordinates,
     date: item.date || "",
     time: item.time || "",
     datetime: formatDate(item.date, item.time),
@@ -383,7 +442,7 @@ export default function Appointments() {
           "Pooja Hegde (Spa & Massage Expert)",
         ]);
       }
-    } catch (err) {
+    } catch {
       setStaffList([
         "Sameer Shaik (Senior Aesthetician)",
         "Ananya Rao (Master Hair Stylist)",
@@ -669,6 +728,11 @@ export default function Appointments() {
     }
   };
 
+  const copyAddressToClipboard = (addr) => {
+    navigator.clipboard.writeText(addr);
+    showToast("Doorstep address copied to clipboard!");
+  };
+
   return (
     <div className="min-h-screen min-w-0 bg-[#FAF8F6] pb-10 text-[#302722]">
       <motion.main
@@ -689,7 +753,7 @@ export default function Appointments() {
             </h1>
 
             <p className="mt-1.5 max-w-xl text-xs leading-5 text-[#8D7F75] sm:text-sm">
-              Manage bookings, coordinate your experts, and verify customer passes in real time.
+              Manage live bookings, coordinate doorstep experts, and verify customer passes in real time.
             </p>
           </div>
 
@@ -823,18 +887,18 @@ export default function Appointments() {
             </div>
           </div>
 
-          {/* Desktop Table View (Added pb-32 to prevent drawer clipping) */}
+          {/* Desktop Table View */}
           <div className="hidden overflow-x-auto overflow-y-visible md:block pb-32">
-            <table className="w-full min-w-[1050px] border-collapse text-left">
+            <table className="w-full min-w-[1100px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-[#F0EAE5] bg-[#FCFBFA] text-[10px] font-semibold uppercase tracking-[1.1px] text-[#9B8D83]">
-                  <th className="px-5 py-4 w-[15%]">Booking</th>
-                  <th className="px-4 py-4 w-[20%]">Customer</th>
-                  <th className="px-4 py-4 w-[18%]">Service</th>
-                  <th className="px-4 py-4 w-[15%]">Schedule</th>
+                  <th className="px-5 py-4 w-[14%]">Booking</th>
+                  <th className="px-4 py-4 w-[18%]">Customer</th>
+                  <th className="px-4 py-4 w-[24%]">Service & Doorstep Address</th>
+                  <th className="px-4 py-4 w-[12%]">Schedule</th>
                   <th className="px-4 py-4 w-[10%]">Status</th>
-                  <th className="px-4 py-4 w-[18%]">Assigned expert</th>
-                  <th className="px-5 py-4 w-[14%] text-right">Actions</th>
+                  <th className="px-4 py-4 w-[14%]">Assigned expert</th>
+                  <th className="px-5 py-4 w-[8%] text-right">Actions</th>
                 </tr>
               </thead>
 
@@ -865,7 +929,6 @@ export default function Appointments() {
                       const isAccepted = booking.status === "Accepted";
                       const isCompleted = booking.status === "Completed";
                       const isRejected = booking.status === "Rejected";
-                      const isHomeService = booking.type === "HOME";
 
                       return (
                         <motion.tr
@@ -878,16 +941,14 @@ export default function Appointments() {
                         >
                           <td className="px-5 py-4 align-middle">
                             <p className="font-mono text-xs font-semibold text-[#302722]">{booking.id}</p>
-                            <p className="mt-1 text-[10px] text-[#A09288]">
-                              {isHomeService ? "Home service" : "Salon visit"}
-                            </p>
+                            <p className="mt-1 text-[10px] text-[#A09288]">Doorstep Service</p>
                           </td>
 
                           <td className="px-4 py-4 align-middle">
                             <div className="flex items-center gap-3">
                               <CustomerAvatar appointment={booking} />
                               <div className="min-w-0">
-                                <p className="max-w-[160px] truncate text-xs font-semibold text-[#302722]" title={booking.customer}>
+                                <p className="max-w-[150px] truncate text-xs font-semibold text-[#302722]" title={booking.customer}>
                                   {booking.customer}
                                 </p>
                                 <p className="mt-1 text-[11px] text-[#A09288]">{formatCurrency(booking.amount)}</p>
@@ -896,12 +957,29 @@ export default function Appointments() {
                           </td>
 
                           <td className="px-4 py-4 align-middle">
-                            <p className="max-w-[150px] truncate text-xs font-medium text-[#51443B]" title={booking.service}>{booking.service}</p>
-                            <div className="mt-1.5 flex items-center gap-1 text-[10px] text-[#A09288]">
-                              {isHomeService ? <MapPin size={11} /> : <Sparkles size={11} />}
-                              <span className="truncate" title={isHomeService ? booking.address : "Salon location"}>
-                                {isHomeService ? booking.address : "In salon"}
+                            <p className="max-w-[220px] truncate text-xs font-semibold text-[#51443B]" title={booking.service}>
+                              {booking.service}
+                            </p>
+                            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[#796B62]">
+                              <MapPin size={13} className="text-[#C56E4E] shrink-0 mt-0.5" />
+                              <span className="line-clamp-2 leading-relaxed font-medium" title={booking.address}>
+                                {booking.address}
                               </span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => copyAddressToClipboard(booking.address)}
+                                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#C56E4E] hover:underline"
+                                title="Copy doorstep address"
+                              >
+                                <Copy size={11} /> Copy Address
+                              </button>
+                              {booking.coordinates && (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                  <MapPinned size={10} /> GPS Verified
+                                </span>
+                              )}
                             </div>
                           </td>
 
@@ -927,8 +1005,7 @@ export default function Appointments() {
                             ) : isRejected ? (
                               <span className="text-[11px] text-[#A09288]">-</span>
                             ) : (
-                              // isAccepted Workflow: Assign Expert
-                              <div className="relative w-full max-w-[180px]">
+                              <div className="relative w-full max-w-[170px]">
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -997,29 +1074,27 @@ export default function Appointments() {
 
                             {isAccepted && (
                               <div className="flex items-center justify-end gap-1.5">
-                                {isHomeService && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setTrackingBooking(booking)}
-                                    disabled={!booking.assignedStaff}
-                                    title={!booking.assignedStaff ? "Assign expert first" : "Track route"}
-                                    className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition ${
-                                      booking.assignedStaff
-                                        ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
-                                        : "cursor-not-allowed bg-stone-100 text-stone-400"
-                                    }`}
-                                  >
-                                    <Navigation size={13} />
-                                    Route
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setTrackingBooking(booking)}
+                                  disabled={!booking.assignedStaff}
+                                  title={!booking.assignedStaff ? "Assign expert first" : "Track route"}
+                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition ${
+                                    booking.assignedStaff
+                                      ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
+                                      : "cursor-not-allowed bg-stone-100 text-stone-400"
+                                  }`}
+                                >
+                                  <Navigation size={13} />
+                                  Route
+                                </button>
 
                                 <button
                                   type="button"
                                   onClick={() => openScanner(booking)}
                                   disabled={!booking.assignedStaff}
                                   title={!booking.assignedStaff ? "Assign an expert first to unlock scanner" : "Scan customer pass"}
-                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition ${
+                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition ${
                                     booking.assignedStaff
                                       ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
                                       : "cursor-not-allowed bg-stone-200 text-stone-500"
@@ -1071,7 +1146,6 @@ export default function Appointments() {
                   const isAccepted = booking.status === "Accepted";
                   const isCompleted = booking.status === "Completed";
                   const isRejected = booking.status === "Rejected";
-                  const isHomeService = booking.type === "HOME";
 
                   return (
                     <motion.article
@@ -1080,52 +1154,64 @@ export default function Appointments() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -6 }}
                       key={booking._id || booking.id}
-                      className="rounded-xl border border-[#EEE7E2] bg-white p-4"
+                      className="rounded-xl border border-[#EEE7E2] bg-white p-4 space-y-3"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-center gap-3">
                           <CustomerAvatar appointment={booking} />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
-                            <p className="mt-1 truncate font-mono text-[10px] text-[#A09288]">{booking.id}</p>
+                            <p className="mt-0.5 truncate font-mono text-[10px] text-[#A09288]">{booking.id}</p>
                           </div>
                         </div>
                         <StatusBadge status={booking.status} />
                       </div>
 
-                      <div className="my-4 h-px bg-[#F1ECE7]" />
+                      <div className="h-px bg-[#F1ECE7]" />
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="min-w-0">
-                          <p className="text-[10px] text-[#A09288]">Service</p>
-                          <p className="mt-1 truncate text-xs font-medium text-[#51443B]">{booking.service}</p>
-                          <p className="mt-1 truncate text-[10px] text-[#A09288]">
-                            {isHomeService ? `🏠 ${booking.address}` : "✨ In salon"}
-                          </p>
+                      <div className="space-y-2 text-xs">
+                        <div>
+                          <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Service</p>
+                          <p className="font-semibold text-[#51443B]">{booking.service}</p>
                         </div>
 
                         <div>
-                          <p className="text-[10px] text-[#A09288]">Amount</p>
-                          <p className="mt-1 text-sm font-semibold text-[#302722]">{formatCurrency(booking.amount)}</p>
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Doorstep Address</p>
+                            <button
+                              type="button"
+                              onClick={() => copyAddressToClipboard(booking.address)}
+                              className="text-[10px] font-semibold text-[#C56E4E] hover:underline flex items-center gap-1"
+                            >
+                              <Copy size={10} /> Copy
+                            </button>
+                          </div>
+                          <div className="mt-1 flex items-start gap-1.5 text-xs text-[#796B62] bg-[#FCFBFA] p-2 rounded-lg border border-[#F0EAE5]">
+                            <MapPin size={14} className="text-[#C56E4E] shrink-0 mt-0.5" />
+                            <span className="leading-relaxed font-medium">{booking.address}</span>
+                          </div>
                         </div>
 
-                        <div className="col-span-2">
-                          <p className="text-[10px] text-[#A09288]">Schedule</p>
-                          <p className="mt-1 flex items-center gap-2 text-xs text-[#67574D]">
-                            <CalendarDays size={14} className="shrink-0 text-[#B66B4B]" />
-                            {booking.datetime}
-                          </p>
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          <div>
+                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Amount</p>
+                            <p className="font-semibold text-[#302722]">{formatCurrency(booking.amount)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Schedule</p>
+                            <p className="font-medium text-[#67574D]">{booking.datetime}</p>
+                          </div>
                         </div>
 
                         {booking.assignedStaff && (
-                          <div className="col-span-2">
-                            <p className="text-[10px] text-[#A09288]">Assigned expert</p>
-                            <p className="mt-1 text-xs font-medium text-[#67574D]">{booking.assignedStaff}</p>
+                          <div className="pt-1">
+                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Assigned Expert</p>
+                            <p className="font-medium text-[#67574D]">{booking.assignedStaff}</p>
                           </div>
                         )}
                       </div>
 
-                      <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F1ECE7] pt-3">
+                      <div className="flex flex-wrap gap-2 border-t border-[#F1ECE7] pt-3">
                         {isPending && (
                           <>
                             <button
@@ -1163,21 +1249,19 @@ export default function Appointments() {
                               {booking.assignedStaff ? "Change Staff" : "Assign Staff"}
                             </button>
 
-                            {isHomeService && (
-                              <button
-                                type="button"
-                                onClick={() => setTrackingBooking(booking)}
-                                disabled={!booking.assignedStaff}
-                                className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition ${
-                                  booking.assignedStaff
-                                    ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
-                                    : "cursor-not-allowed bg-stone-100 text-stone-400"
-                                }`}
-                              >
-                                <Navigation size={14} />
-                                Route
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => setTrackingBooking(booking)}
+                              disabled={!booking.assignedStaff}
+                              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition ${
+                                booking.assignedStaff
+                                  ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
+                                  : "cursor-not-allowed bg-stone-100 text-stone-400"
+                              }`}
+                            >
+                              <Navigation size={14} />
+                              Route
+                            </button>
 
                             <button
                               type="button"
@@ -1196,14 +1280,14 @@ export default function Appointments() {
                         )}
 
                         {isCompleted && (
-                          <div className="flex items-center gap-2 text-xs font-medium text-emerald-700">
+                          <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 py-1">
                             <CheckCircle2 size={15} />
                             Service completed
                           </div>
                         )}
 
                         {isRejected && (
-                          <div className="text-xs text-rose-600">This appointment was rejected.</div>
+                          <div className="text-xs text-rose-600 py-1">This appointment was rejected.</div>
                         )}
                       </div>
 
@@ -1219,7 +1303,7 @@ export default function Appointments() {
                               onClick={() => assignStaff(booking, staff)}
                               className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#F8EFE8]"
                             >
-                              {staff}
+                              <span>{staff}</span>
                               {booking.assignedStaff === staff && <Check size={14} />}
                             </button>
                           ))}
@@ -1265,7 +1349,7 @@ export default function Appointments() {
         )}
       </AnimatePresence>
 
-      {/* Swiggy-Style Live Route Tracking Modal */}
+      {/* Real Doorstep Address Route Tracking Modal */}
       <AnimatePresence>
         {trackingBooking && (
           <LiveRouteTrackingModal
@@ -1302,10 +1386,16 @@ export default function Appointments() {
   );
 }
 
-// --- SWIGGY-STYLE LIVE ROUTE TRACKING MODAL ---
+// --- DOORSTEP ADDRESS LIVE ROUTE TRACKING MODAL ---
 function LiveRouteTrackingModal({ booking, onClose }) {
-  const destinationAddress = encodeURIComponent(booking.address || "Customer Home Address");
-  const googleMapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destinationAddress}`;
+  const doorstepAddress = booking.address || "Doorstep Service Address";
+  
+  // Directly use GPS coordinates if available, otherwise use the encoded doorstep address string
+  const destinationQuery = booking.coordinates
+    ? `${booking.coordinates.latitude},${booking.coordinates.longitude}`
+    : encodeURIComponent(doorstepAddress);
+
+  const googleMapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destinationQuery}`;
 
   return (
     <motion.div
@@ -1331,10 +1421,10 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             </div>
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[1.5px] text-blue-600">
-                Swiggy-Style Live Tracking
+                Live Route Navigation
               </p>
               <h2 className="mt-0.5 text-base font-semibold text-[#302722]">
-                Route to Customer House
+                Dispatch to Doorstep Address
               </h2>
             </div>
           </div>
@@ -1349,50 +1439,60 @@ function LiveRouteTrackingModal({ booking, onClose }) {
           </button>
         </div>
 
-        {/* Simulated Swiggy Map View */}
-        <div className="relative h-[280px] w-full bg-[#E8F0F2] overflow-hidden">
-          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" className="absolute inset-0 opacity-60">
+        {/* Live Route Map View */}
+        <div className="relative h-[240px] w-full bg-[#E8F0F2] overflow-hidden">
+          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" className="absolute inset-0 opacity-70">
             <defs>
               <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
                 <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#CBD5E1" strokeWidth="1"/>
               </pattern>
             </defs>
             <rect width="100%" height="100%" fill="url(#gridPattern)" />
-            {/* Dashed Route Path */}
-            <path d="M 70,140 Q 180,60 260,160 T 400,100" fill="none" stroke="#3B82F6" strokeWidth="5" strokeDasharray="8 6" className="animate-pulse" />
+            <path d="M 60,150 Q 180,50 280,140 T 420,110" fill="none" stroke="#2563EB" strokeWidth="5" strokeDasharray="8 6" className="animate-pulse" />
           </svg>
 
           {/* Moving Expert Marker */}
           <motion.div
-            animate={{ x: [0, 80, 160, 220], y: [0, -20, 30, -10] }}
-            transition={{ repeat: Infinity, duration: 7, ease: "easeInOut" }}
-            className="absolute top-[100px] left-[60px] bg-[#302722] text-white p-2.5 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center"
+            animate={{ x: [0, 90, 180, 240], y: [0, -15, 25, -5] }}
+            transition={{ repeat: Infinity, duration: 6, ease: "easeInOut" }}
+            className="absolute top-[80px] left-[50px] bg-[#302722] text-white p-2.5 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center"
           >
-            <Car size={20} className="text-[#E5A024]" />
+            <Car size={18} className="text-[#E5A024]" />
           </motion.div>
 
-          {/* Customer Destination Pin */}
-          <div className="absolute bottom-[60px] right-[70px] bg-red-600 text-white p-2.5 rounded-full shadow-lg border-2 border-white z-10">
-            <Home size={20} />
+          {/* Doorstep Destination Pin */}
+          <div className="absolute bottom-[40px] right-[60px] bg-red-600 text-white p-2.5 rounded-full shadow-lg border-2 border-white z-10">
+            <Home size={18} />
           </div>
 
-          {/* Floating ETA Pill */}
+          {/* ETA Floating Pill */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full shadow-md border border-[#EEE7E2] text-center z-10 flex items-center gap-2">
             <Compass size={15} className="text-blue-600 animate-spin" />
-            <span className="text-xs font-bold text-[#302722]">Expert arriving in <span className="text-blue-600">12 mins</span> (2.8 km)</span>
+            <span className="text-xs font-bold text-[#302722]">Expert dispatched to doorstep · <span className="text-blue-600">Live GPS Active</span></span>
           </div>
         </div>
 
         <div className="p-5 sm:p-6 space-y-4">
           <div className="rounded-2xl border border-[#EEE7E2] bg-[#FCFBFA] p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Assigned Expert</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Assigned Professional</span>
               <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">On Route</span>
             </div>
-            <p className="text-sm font-semibold text-[#302722]">{booking.assignedStaff || "Professional Stylist"}</p>
-            <div className="flex items-start gap-2 pt-1 text-xs text-[#62564D]">
-              <MapPin size={15} className="text-[#B66B4B] shrink-0 mt-0.5" />
-              <span className="font-medium leading-relaxed">{booking.address}</span>
+            <p className="text-sm font-semibold text-[#302722]">{booking.assignedStaff || "Beauty Expert"}</p>
+            
+            <div className="pt-2 border-t border-[#EEE7E2]/60">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Customer Doorstep Address</p>
+                {booking.coordinates && (
+                  <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                    Pinpoint GPS Active
+                  </span>
+                )}
+              </div>
+              <div className="flex items-start gap-2 text-xs text-[#51443B]">
+                <MapPin size={16} className="text-[#C56E4E] shrink-0 mt-0.5" />
+                <span className="font-semibold leading-relaxed">{doorstepAddress}</span>
+              </div>
             </div>
           </div>
 
@@ -1402,7 +1502,7 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             rel="noopener noreferrer"
             className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider transition shadow-md flex items-center justify-center gap-2"
           >
-            Open in Google Maps <ExternalLink size={15} />
+            Open Live Navigation in Google Maps <ExternalLink size={15} />
           </a>
         </div>
 

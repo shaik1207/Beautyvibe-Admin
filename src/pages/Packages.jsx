@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -21,6 +21,8 @@ import {
   Crown,
   CircleCheck,
   TriangleAlert,
+  Upload,
+  Info,
 } from "lucide-react";
 import { io } from "socket.io-client";
 import API from "./../utils/axios";
@@ -29,6 +31,9 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
 const DEFAULT_IMAGE =
   "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1000&q=85";
+
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15MB
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 const servicesCatalog = [
   { id: "SRV-101", name: "Korean Glow Facial", price: 899, duration: "60 mins", category: "Skin & Face" },
@@ -63,6 +68,23 @@ const extractPackages = (response) => {
 
 const getId = (pkg) => pkg?.id || pkg?._id || pkg?.packageId || null;
 
+const resolveImageUrl = (rawImage) => {
+  if (!rawImage || typeof rawImage !== "string" || !rawImage.trim()) {
+    return DEFAULT_IMAGE;
+  }
+  const trimmed = rawImage.trim();
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:")
+  ) {
+    return trimmed;
+  }
+  const backendBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+  return `${backendBase.replace(/\/+$/, "")}/${trimmed.replace(/^\/+/, "")}`;
+};
+
 const normalizePackage = (pkg) => ({
   ...pkg,
   id: getId(pkg),
@@ -70,7 +92,7 @@ const normalizePackage = (pkg) => ({
   tagline: pkg?.tagline || pkg?.description || "A signature BeautyVibe experience.",
   price: pkg?.price ?? pkg?.amount ?? 0,
   originalPrice: pkg?.originalPrice ?? pkg?.originalAmount ?? "",
-  image: pkg?.image || pkg?.imageUrl || DEFAULT_IMAGE,
+  image: resolveImageUrl(pkg?.image || pkg?.imageUrl),
   badge: pkg?.badge || pkg?.label || "Signature Collection",
   services: Array.isArray(pkg?.services)
     ? pkg.services.map((s) => (typeof s === "string" ? s : s?.name || "")).filter(Boolean)
@@ -82,6 +104,17 @@ const formatPrice = (value) => {
   const number = Number(value);
   if (!Number.isFinite(number)) return String(value ?? "0");
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(number);
+};
+
+const validateImage = (file) => {
+  if (!file) throw new Error("Please select an image.");
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    throw new Error("Choose JPG, PNG, WebP or GIF images only.");
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    throw new Error("Image size must be 15 MB or smaller.");
+  }
+  return true;
 };
 
 export default function AdminPackages() {
@@ -101,9 +134,15 @@ export default function AdminPackages() {
   const [packageName, setPackageName] = useState("");
   const [packageTagline, setPackageTagline] = useState("");
   const [packagePrice, setPackagePrice] = useState("");
-  const [packageImage, setPackageImage] = useState("");
   const [packageBadge, setPackageBadge] = useState("Signature Collection");
   const [selectedServices, setSelectedServices] = useState(["Korean Glow Facial"]);
+
+  // Image upload state
+  const [imageInputMode, setImageInputMode] = useState("upload"); // "upload" | "url"
+  const [packageImage, setPackageImage] = useState("");
+  const [selectedImageFile, setSelectedImageFile] = useState(null);
+  const fileInputRef = useRef(null);
+  const imagePreviewRef = useRef("");
 
   const showToast = useCallback((message, type = "success") => {
     setToast({ id: Date.now(), message, type });
@@ -114,6 +153,31 @@ export default function AdminPackages() {
     const timer = window.setTimeout(() => setToast(null), 3600);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreviewRef.current) {
+        URL.revokeObjectURL(imagePreviewRef.current);
+      }
+    };
+  }, []);
+
+  const setLocalImagePreview = (file) => {
+    if (imagePreviewRef.current) {
+      URL.revokeObjectURL(imagePreviewRef.current);
+      imagePreviewRef.current = "";
+    }
+    const previewUrl = URL.createObjectURL(file);
+    imagePreviewRef.current = previewUrl;
+    setPackageImage(previewUrl);
+  };
+
+  const clearLocalImagePreview = () => {
+    if (imagePreviewRef.current) {
+      URL.revokeObjectURL(imagePreviewRef.current);
+      imagePreviewRef.current = "";
+    }
+  };
 
   const fetchPackages = useCallback(async (showLoader = true) => {
     if (showLoader) setLoading(true);
@@ -178,13 +242,19 @@ export default function AdminPackages() {
   }, [fetchPackages, showToast]);
 
   const resetForm = () => {
+    clearLocalImagePreview();
     setEditingPackageId(null);
     setPackageName("");
     setPackageTagline("");
     setPackagePrice("");
     setPackageImage("");
+    setSelectedImageFile(null);
+    setImageInputMode("upload");
     setPackageBadge("Signature Collection");
     setSelectedServices(["Korean Glow Facial"]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const openCreateModal = () => {
@@ -193,6 +263,7 @@ export default function AdminPackages() {
   };
 
   const openEditModal = (pkg) => {
+    resetForm();
     setEditingPackageId(getId(pkg));
     setPackageName(pkg.name || "");
     setPackageTagline(pkg.tagline || "");
@@ -200,7 +271,44 @@ export default function AdminPackages() {
     setPackageImage(pkg.image || "");
     setPackageBadge(pkg.badge || "Signature Collection");
     setSelectedServices(pkg.services?.length ? pkg.services : ["Korean Glow Facial"]);
+    setImageInputMode("url");
     setIsModalOpen(true);
+  };
+
+  const applySelectedImage = (file) => {
+    try {
+      validateImage(file);
+      setSelectedImageFile(file);
+      setLocalImagePreview(file);
+      setImageInputMode("upload");
+    } catch (error) {
+      showToast(error.message, "error");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleFileSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    applySelectedImage(file);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    applySelectedImage(file);
+  };
+
+  const handleRemoveImage = () => {
+    clearLocalImagePreview();
+    setPackageImage("");
+    setSelectedImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleToggleServiceSelection = (serviceName) => {
@@ -246,27 +354,40 @@ export default function AdminPackages() {
       return;
     }
 
+    if (selectedImageFile) {
+      try {
+        validateImage(selectedImageFile);
+      } catch (error) {
+        showToast(error.message, "error");
+        return;
+      }
+    }
+
     setSaving(true);
 
-    const payload = {
-      name: packageName.trim(),
-      tagline: packageTagline.trim() || "A signature salon and spa experience, thoughtfully curated for you.",
-      price: numericPrice,
-      originalPrice,
-      duration: `${selectedServices.length * 45} mins`,
-      image: packageImage.trim() || DEFAULT_IMAGE,
-      services: selectedServices,
-      badge: packageBadge.trim() || "Signature Collection",
-      isFeatured: true,
-    };
+    const formData = new FormData();
+    formData.append("name", packageName.trim());
+    formData.append("tagline", packageTagline.trim() || "A signature salon and spa experience, thoughtfully curated for you.");
+    formData.append("price", String(numericPrice));
+    formData.append("originalPrice", String(originalPrice));
+    formData.append("duration", `${selectedServices.length * 45} mins`);
+    formData.append("badge", packageBadge.trim() || "Signature Collection");
+    formData.append("isFeatured", "true");
+    formData.append("services", JSON.stringify(selectedServices));
+
+    if (selectedImageFile) {
+      formData.append("image", selectedImageFile, selectedImageFile.name);
+    } else if (packageImage.trim() && !packageImage.startsWith("blob:")) {
+      formData.append("imageUrl", packageImage.trim());
+    }
 
     try {
       const isEditing = Boolean(editingPackageId);
 
       if (isEditing) {
-        await API.put(`/api/packages/${editingPackageId}`, payload);
+        await API.put(`/api/packages/${editingPackageId}`, formData);
       } else {
-        await API.post("/api/packages", payload);
+        await API.post("/api/packages", formData);
       }
 
       setIsModalOpen(false);
@@ -330,7 +451,7 @@ export default function AdminPackages() {
               Package Collection
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-6 text-[#8C7A70]">
-              Curate, manage, and refine your premium salon experiences.
+              Curate, manage, and refine your premium salon experiences with robust image uploads.
             </p>
           </div>
 
@@ -586,7 +707,7 @@ export default function AdminPackages() {
                   <h2 className="text-xl font-semibold tracking-tight sm:text-2xl text-[#2D2623]">
                     {editingPackageId ? "Edit your package" : "Create a new package"}
                   </h2>
-                  <p className="mt-1 text-xs leading-5 text-[#8C7A70]">Configure the details of your salon experience.</p>
+                  <p className="mt-1 text-xs leading-5 text-[#8C7A70]">Configure the details and media of your salon experience.</p>
                 </div>
                 <button type="button" onClick={() => !saving && setIsModalOpen(false)} disabled={saving} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#FCF9F6] border border-[#EADBD2] text-[#8C7A70] transition hover:opacity-80 disabled:opacity-40">
                   <X size={17} />
@@ -618,17 +739,96 @@ export default function AdminPackages() {
                     <input type="text" value={packageBadge} onChange={(e) => setPackageBadge(e.target.value)} placeholder="Signature Collection" maxLength={60} className="w-full rounded-xl bg-[#FCF9F6] border border-[#EADBD2] px-4 py-3 text-sm text-[#2D2623] outline-none transition" />
                   </label>
 
-                  <label className="block sm:col-span-2">
-                    <span className="mb-2 flex items-center gap-2 text-xs font-medium text-[#2D2623]">
-                      <ImageIcon size={14} /> Image URL
-                    </span>
-                    <input type="url" value={packageImage} onChange={(e) => setPackageImage(e.target.value)} placeholder="https://example.com/package-image.jpg" className="w-full rounded-xl bg-[#FCF9F6] border border-[#EADBD2] px-4 py-3 text-sm text-[#2D2623] outline-none transition" />
-                    {packageImage.trim() && (
-                      <div className="mt-3 h-36 overflow-hidden rounded-xl bg-[#EADBD2] border border-[#EADBD2]">
-                        <img src={packageImage} alt="Package preview" onError={(e) => { e.currentTarget.style.opacity = "0"; }} onLoad={(e) => { e.currentTarget.style.opacity = "1"; }} className="h-full w-full object-cover transition-opacity" />
+                  {/* ROBUST IMAGE UPLOAD SECTION */}
+                  <div className="sm:col-span-2 rounded-2xl border border-[#EADBD2] bg-[#FCF9F6] p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <span className="block text-xs font-medium text-[#2D2623]">Package image</span>
+                        <p className="mt-0.5 text-[11px] text-[#8C7A70]">Upload a high-resolution image or provide a public URL.</p>
+                      </div>
+
+                      <div className="flex rounded-xl bg-[#FFF6F0] p-1 border border-[#EADBD2]">
+                        <button
+                          type="button"
+                          onClick={() => setImageInputMode("upload")}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                            imageInputMode === "upload" ? "bg-[#2D2623] text-white shadow-sm" : "text-[#8C7A70]"
+                          }`}
+                        >
+                          Upload file
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setImageInputMode("url")}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                            imageInputMode === "url" ? "bg-[#2D2623] text-white shadow-sm" : "text-[#8C7A70]"
+                          }`}
+                        >
+                          Image URL
+                        </button>
+                      </div>
+                    </div>
+
+                    {packageImage && (
+                      <div className="relative mb-3 h-40 overflow-hidden rounded-xl bg-[#EADBD2] border border-[#EADBD2]">
+                        <img
+                          src={packageImage}
+                          alt="Preview"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = DEFAULT_IMAGE;
+                          }}
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleRemoveImage}
+                          className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-md backdrop-blur-md transition hover:bg-white"
+                        >
+                          <Trash2 size={13} /> Remove
+                        </button>
                       </div>
                     )}
-                  </label>
+
+                    {imageInputMode === "upload" ? (
+                      <div
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex min-h-[110px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#EADBD2] bg-[#FFF6F0] p-4 text-center transition hover:border-[#C56E4E]"
+                      >
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          onChange={handleFileSelect}
+                          className="hidden"
+                        />
+                        <Upload size={22} className="mb-2 text-[#C56E4E]" />
+                        <p className="text-xs font-semibold text-[#2D2623]">Click or drag & drop image here</p>
+                        <p className="mt-0.5 text-[10px] text-[#8C7A70]">Supports JPG, PNG, WebP, GIF (Max 15MB)</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <input
+                          type="url"
+                          value={packageImage.startsWith("blob:") ? "" : packageImage}
+                          onChange={(e) => {
+                            clearLocalImagePreview();
+                            setSelectedImageFile(null);
+                            setPackageImage(e.target.value);
+                          }}
+                          placeholder="https://images.unsplash.com/photo-..."
+                          className="w-full rounded-xl bg-white border border-[#EADBD2] px-4 py-3 text-sm text-[#2D2623] outline-none transition"
+                        />
+                      </div>
+                    )}
+
+                    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[#8C7A70]">
+                      <Info size={13} className="shrink-0 text-[#C56E4E]" />
+                      <span>Files are safely processed and stored in your backend upload directory.</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* SERVICE SELECTION */}
