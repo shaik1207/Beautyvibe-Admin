@@ -48,6 +48,7 @@ import {
   Home,
   Copy,
   MapPinned,
+  Phone,
 } from "lucide-react";
 
 const SOCKET_URL =
@@ -106,8 +107,20 @@ const formatDate = (date, time) => {
 };
 
 function getCustomerDetails(item) {
-  if (typeof item.customer === "string") return { name: item.customer, avatar: item.avatar || "" };
-  if (typeof item.user === "string") return { name: item.user, avatar: item.avatar || "" };
+  if (typeof item.customer === "string") {
+    return {
+      name: item.customer,
+      avatar: item.avatar || "",
+      mobile: item.mobile || item.phone || item.mobileNumber || "",
+    };
+  }
+  if (typeof item.user === "string") {
+    return {
+      name: item.user,
+      avatar: item.avatar || "",
+      mobile: item.mobile || item.phone || item.mobileNumber || "",
+    };
+  }
 
   const u = item.user || {};
   const c = item.customer || item.customerDetails || {};
@@ -124,15 +137,29 @@ function getCustomerDetails(item) {
     "Client";
 
   const avatar = u.avatar || c.avatar || item.avatar || "";
+  
+  const mobile =
+    item.mobileNumber ||
+    item.mobile ||
+    item.phone ||
+    item.phoneNumber ||
+    item.customerPhone ||
+    u.phone ||
+    u.mobile ||
+    u.phoneNumber ||
+    c.phone ||
+    c.mobile ||
+    c.phoneNumber ||
+    "";
 
   return {
     name: name.trim(),
     avatar,
+    mobile: mobile.trim(),
   };
 }
 
 function parseAddress(item) {
-  // Strictly prioritize doorstep and user booking address fields
   const rawAddr =
     item.doorstepAddress ||
     item.userDoorstepAddress ||
@@ -205,6 +232,7 @@ function normalizeAppointment(item) {
     passCode: item.passCode || item.requestId || "",
     customer: customer.name,
     avatar: customer.avatar,
+    mobile: customer.mobile,
     service:
       item.serviceName ||
       item.service?.name ||
@@ -525,6 +553,7 @@ export default function Appointments() {
             user: updated.user || {
               name: item.customer,
               avatar: item.avatar,
+              phone: item.mobile,
             },
           });
 
@@ -571,6 +600,7 @@ export default function Appointments() {
       const matchesFilter = filter === "All" || item.status === filter;
       const searchableText = [
         item.customer,
+        item.mobile,
         item.id,
         item.passCode,
         item.service,
@@ -828,7 +858,7 @@ export default function Appointments() {
                   <input
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Search customer, ID or service..."
+                    placeholder="Search customer, mobile, ID or service..."
                     className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-[#B1A49A]"
                   />
                   {searchQuery && (
@@ -893,7 +923,7 @@ export default function Appointments() {
               <thead>
                 <tr className="border-b border-[#F0EAE5] bg-[#FCFBFA] text-[10px] font-semibold uppercase tracking-[1.1px] text-[#9B8D83]">
                   <th className="px-5 py-4 w-[14%]">Booking</th>
-                  <th className="px-4 py-4 w-[18%]">Customer</th>
+                  <th className="px-4 py-4 w-[18%]">Customer & Mobile</th>
                   <th className="px-4 py-4 w-[24%]">Service & Doorstep Address</th>
                   <th className="px-4 py-4 w-[12%]">Schedule</th>
                   <th className="px-4 py-4 w-[10%]">Status</th>
@@ -951,7 +981,15 @@ export default function Appointments() {
                                 <p className="max-w-[150px] truncate text-xs font-semibold text-[#302722]" title={booking.customer}>
                                   {booking.customer}
                                 </p>
-                                <p className="mt-1 text-[11px] text-[#A09288]">{formatCurrency(booking.amount)}</p>
+                                {booking.mobile ? (
+                                  <p className="mt-0.5 flex items-center gap-1 font-mono text-[11px] text-[#796B62]" title={booking.mobile}>
+                                    <Phone size={11} className="text-[#C56E4E] shrink-0" />
+                                    <span className="truncate">{booking.mobile}</span>
+                                  </p>
+                                ) : (
+                                  <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
+                                )}
+                                <p className="mt-0.5 text-[10px] text-[#A09288]">{formatCurrency(booking.amount)}</p>
                               </div>
                             </div>
                           </td>
@@ -1161,6 +1199,14 @@ export default function Appointments() {
                           <CustomerAvatar appointment={booking} />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
+                            {booking.mobile ? (
+                              <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
+                                <Phone size={12} className="text-[#C56E4E]" />
+                                <span>{booking.mobile}</span>
+                              </p>
+                            ) : (
+                              <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
+                            )}
                             <p className="mt-0.5 truncate font-mono text-[10px] text-[#A09288]">{booking.id}</p>
                           </div>
                         </div>
@@ -1349,7 +1395,7 @@ export default function Appointments() {
         )}
       </AnimatePresence>
 
-      {/* Real Doorstep Address Route Tracking Modal */}
+      {/* Real Doorstep Address & Coordinates Route Tracking Modal */}
       <AnimatePresence>
         {trackingBooking && (
           <LiveRouteTrackingModal
@@ -1386,11 +1432,11 @@ export default function Appointments() {
   );
 }
 
-// --- DOORSTEP ADDRESS LIVE ROUTE TRACKING MODAL ---
+// --- DOORSTEP ADDRESS & COORDINATES LIVE ROUTE TRACKING MODAL ---
 function LiveRouteTrackingModal({ booking, onClose }) {
   const doorstepAddress = booking.address || "Doorstep Service Address";
   
-  // Directly use GPS coordinates if available, otherwise use the encoded doorstep address string
+  // Accurately use precise GPS coordinates if available for Google Maps navigation, otherwise fallback to exact address string
   const destinationQuery = booking.coordinates
     ? `${booking.coordinates.latitude},${booking.coordinates.longitude}`
     : encodeURIComponent(doorstepAddress);
@@ -1473,19 +1519,41 @@ function LiveRouteTrackingModal({ booking, onClose }) {
         </div>
 
         <div className="p-5 sm:p-6 space-y-4">
-          <div className="rounded-2xl border border-[#EEE7E2] bg-[#FCFBFA] p-4 space-y-2">
+          <div className="rounded-2xl border border-[#EEE7E2] bg-[#FCFBFA] p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Assigned Professional</span>
-              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">On Route</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Customer Contact</span>
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Verified Client</span>
             </div>
-            <p className="text-sm font-semibold text-[#302722]">{booking.assignedStaff || "Beauty Expert"}</p>
-            
-            <div className="pt-2 border-t border-[#EEE7E2]/60">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-[#302722]">{booking.customer}</p>
+                {booking.mobile && (
+                  <p className="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-[#796B62]">
+                    <Phone size={13} className="text-[#C56E4E]" />
+                    <span>{booking.mobile}</span>
+                  </p>
+                )}
+              </div>
+              {booking.mobile && (
+                <a
+                  href={`tel:${booking.mobile}`}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#C56E4E] px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#A35539]"
+                >
+                  <Phone size={13} /> Call Client
+                </a>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-[#EEE7E2]/60">
               <div className="flex items-center justify-between mb-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Customer Doorstep Address</p>
-                {booking.coordinates && (
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Accurate Doorstep Address</p>
+                {booking.coordinates ? (
                   <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                    Pinpoint GPS Active
+                    Pinpoint Lat: {booking.coordinates.latitude.toFixed(4)}, Lon: {booking.coordinates.longitude.toFixed(4)}
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                    Address Navigation
                   </span>
                 )}
               </div>
@@ -1502,7 +1570,7 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             rel="noopener noreferrer"
             className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider transition shadow-md flex items-center justify-center gap-2"
           >
-            Open Live Navigation in Google Maps <ExternalLink size={15} />
+            Open Accurate Navigation in Google Maps <ExternalLink size={15} />
           </a>
         </div>
 
@@ -1757,6 +1825,12 @@ function QRScannerModal({ booking, onClose, onVerified }) {
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
+              {booking.mobile && (
+                <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
+                  <Phone size={11} className="text-[#C56E4E]" />
+                  <span>{booking.mobile}</span>
+                </p>
+              )}
               <p className="mt-1 truncate text-[11px] text-[#8D7F75]">
                 {booking.service} · {booking.id}
               </p>
