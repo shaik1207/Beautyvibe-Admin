@@ -107,73 +107,85 @@ const formatDate = (date, time) => {
 };
 
 function getCustomerDetails(item) {
-  if (typeof item.customer === "string") {
-    return {
-      name: item.customer,
-      avatar: item.avatar || "",
-      mobile: item.mobile || item.phone || item.mobileNumber || "",
-    };
-  }
-  if (typeof item.user === "string") {
-    return {
-      name: item.user,
-      avatar: item.avatar || "",
-      mobile: item.mobile || item.phone || item.mobileNumber || "",
-    };
-  }
-
-  const u = item.user || {};
-  const c = item.customer || item.customerDetails || {};
+  const u = typeof item.user === "object" && item.user !== null ? item.user : {};
+  const c = typeof item.customer === "object" && item.customer !== null ? item.customer : (typeof item.customerDetails === "object" && item.customerDetails !== null ? item.customerDetails : {});
+  const b = typeof item.bookingDetails === "object" && item.bookingDetails !== null ? item.bookingDetails : {};
 
   const name =
+    item.customerName ||
+    item.userName ||
+    item.name ||
+    b.customerName ||
+    b.name ||
+    (typeof item.customer === "string" ? item.customer : null) ||
+    (typeof item.user === "string" ? item.user : null) ||
     u.name ||
     u.fullName ||
     c.name ||
     c.fullName ||
-    item.customerName ||
-    item.userName ||
-    item.name ||
-    [item.firstName, item.lastName].filter(Boolean).join(" ") ||
+    [
+      item.firstName || u.firstName || c.firstName || b.firstName,
+      item.lastName || u.lastName || c.lastName || b.lastName,
+    ].filter(Boolean).join(" ") ||
     "Client";
 
-  const avatar = u.avatar || c.avatar || item.avatar || "";
-  
+  const avatar = item.avatar || u.avatar || c.avatar || b.avatar || "";
+
   const mobile =
     item.mobileNumber ||
     item.mobile ||
     item.phone ||
     item.phoneNumber ||
     item.customerPhone ||
-    u.phone ||
+    item.userPhone ||
+    item.contact ||
+    item.contactNumber ||
+    item.clientPhone ||
+    b.mobileNumber ||
+    b.mobile ||
+    b.phone ||
+    b.phoneNumber ||
+    u.mobileNumber ||
     u.mobile ||
+    u.phone ||
     u.phoneNumber ||
-    c.phone ||
+    c.mobileNumber ||
     c.mobile ||
+    c.phone ||
     c.phoneNumber ||
     "";
 
   return {
-    name: name.trim(),
-    avatar,
-    mobile: mobile.trim(),
+    name: String(name).trim(),
+    avatar: String(avatar).trim(),
+    mobile: String(mobile).trim(),
   };
 }
 
 function parseAddress(item) {
+  const b = typeof item.bookingDetails === "object" && item.bookingDetails !== null ? item.bookingDetails : {};
+
   const rawAddr =
     item.doorstepAddress ||
+    item.doorStepAddress ||
+    item.doorstep_address ||
+    item.address ||
     item.userDoorstepAddress ||
     item.serviceAddress ||
     item.clientAddress ||
-    item.address ||
     item.bookingAddress ||
     item.shippingAddress ||
     item.deliveryAddress ||
     item.customerAddress ||
     item.userAddress ||
+    b.doorstepAddress ||
+    b.doorStepAddress ||
+    b.address ||
     (typeof item.location === "string" ? item.location : null) ||
     item.location?.fullAddress ||
     item.location?.address ||
+    item.location?.street ||
+    item.location?.city ||
     item.user?.address ||
     item.user?.location ||
     item.customer?.address ||
@@ -183,18 +195,22 @@ function parseAddress(item) {
     if (typeof rawAddr === "string") {
       return rawAddr;
     }
-    if (typeof rawAddr === "object") {
+    if (typeof rawAddr === "object" && rawAddr !== null) {
       return (
         rawAddr.fullAddress ||
         rawAddr.address ||
         rawAddr.street ||
         rawAddr.location ||
         rawAddr.city ||
-        [rawAddr.houseNo, rawAddr.street, rawAddr.city].filter(Boolean).join(", ") ||
+        [rawAddr.houseNo, rawAddr.street, rawAddr.city, rawAddr.landmark].filter(Boolean).join(", ") ||
         JSON.stringify(rawAddr)
       );
     }
     return String(rawAddr);
+  }
+
+  if (item.houseNo || item.street || item.city || item.landmark) {
+    return [item.houseNo, item.street, item.city, item.landmark].filter(Boolean).join(", ");
   }
 
   return "Doorstep Service Address";
@@ -1436,7 +1452,6 @@ export default function Appointments() {
 function LiveRouteTrackingModal({ booking, onClose }) {
   const doorstepAddress = booking.address || "Doorstep Service Address";
   
-  // Accurately use precise GPS coordinates if available for Google Maps navigation, otherwise fallback to exact address string
   const destinationQuery = booking.coordinates
     ? `${booking.coordinates.latitude},${booking.coordinates.longitude}`
     : encodeURIComponent(doorstepAddress);
