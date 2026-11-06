@@ -134,10 +134,9 @@ function getCustomerDetails(item) {
 
   const avatar = item.avatar || u.avatar || c.avatar || client.avatar || profile.avatar || "";
 
-  // Exhaustive check across all potential database field name variations for phone/mobile
+  // STRICT & PRIORITY extraction: Directly read actual persisted fields from the backend item first
   const mobile =
     item.mobileNumber ||
-    item.mobile ||
     item.phone ||
     item.phoneNumber ||
     item.customerPhone ||
@@ -150,28 +149,14 @@ function getCustomerDetails(item) {
     u.mobile ||
     u.phone ||
     u.phoneNumber ||
-    u.customerPhone ||
-    u.userPhone ||
-    u.contact ||
-    u.contactNumber ||
-    u.telephone ||
     c.mobileNumber ||
     c.mobile ||
     c.phone ||
     c.phoneNumber ||
-    c.customerPhone ||
-    c.userPhone ||
-    c.contact ||
-    c.contactNumber ||
-    c.telephone ||
     client.mobileNumber ||
-    client.mobile ||
     client.phone ||
-    client.phoneNumber ||
     profile.mobileNumber ||
-    profile.mobile ||
     profile.phone ||
-    profile.phoneNumber ||
     "";
 
   return {
@@ -1415,7 +1400,6 @@ export default function Appointments() {
         )}
       </AnimatePresence>
 
-      {/* Real Doorstep Address & Coordinates Route Tracking Modal */}
       <AnimatePresence>
         {trackingBooking && (
           <LiveRouteTrackingModal
@@ -1452,7 +1436,6 @@ export default function Appointments() {
   );
 }
 
-// --- DOORSTEP ADDRESS & COORDINATES LIVE ROUTE TRACKING MODAL ---
 function LiveRouteTrackingModal({ booking, onClose }) {
   const doorstepAddress = booking.address || "Doorstep Service Address";
   
@@ -1504,7 +1487,6 @@ function LiveRouteTrackingModal({ booking, onClose }) {
           </button>
         </div>
 
-        {/* Live Route Map View */}
         <div className="relative h-[240px] w-full bg-[#E8F0F2] overflow-hidden">
           <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" className="absolute inset-0 opacity-70">
             <defs>
@@ -1516,7 +1498,6 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             <path d="M 60,150 Q 180,50 280,140 T 420,110" fill="none" stroke="#2563EB" strokeWidth="5" strokeDasharray="8 6" className="animate-pulse" />
           </svg>
 
-          {/* Moving Expert Marker */}
           <motion.div
             animate={{ x: [0, 90, 180, 240], y: [0, -15, 25, -5] }}
             transition={{ repeat: Infinity, duration: 6, ease: "easeInOut" }}
@@ -1525,12 +1506,10 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             <Car size={18} className="text-[#E5A024]" />
           </motion.div>
 
-          {/* Doorstep Destination Pin */}
           <div className="absolute bottom-[40px] right-[60px] bg-red-600 text-white p-2.5 rounded-full shadow-lg border-2 border-white z-10">
             <Home size={18} />
           </div>
 
-          {/* ETA Floating Pill */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full shadow-md border border-[#EEE7E2] text-center z-10 flex items-center gap-2">
             <Compass size={15} className="text-blue-600 animate-spin" />
             <span className="text-xs font-bold text-[#302722]">Expert dispatched to doorstep · <span className="text-blue-600">Live GPS Active</span></span>
