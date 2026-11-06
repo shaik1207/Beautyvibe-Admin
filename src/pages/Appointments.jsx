@@ -60,21 +60,11 @@ const clean = (value) => {
 
   const lower = result.toLowerCase();
 
-  // Exclude placeholder or invalid string patterns
   if (/^(null|undefined|n\/a|na|undefined undefined|null null|valued client)$/.test(lower)) {
     return "";
   }
 
-  // Exclude email addresses from being treated as names
   if (result.includes("@") && result.includes(".")) {
-    return "";
-  }
-
-  if (
-    result.includes("9876543210") ||
-    result === "+91 98765 43210" ||
-    result === "98765 43210"
-  ) {
     return "";
   }
 
@@ -124,13 +114,10 @@ const formatDate = (date, time) => {
 
 function formatAddress(value) {
   if (!value) return "";
-
   if (typeof value === "string") return clean(value);
-
   if (Array.isArray(value)) {
     return value.map(formatAddress).filter(Boolean).join(", ");
   }
-
   if (!isObject(value)) return "";
 
   const direct = firstValue(
@@ -183,12 +170,10 @@ function getUserAddress(user, appointment) {
   }
 
   const addresses = user.addresses;
-
   if (Array.isArray(addresses)) {
     const selected =
       addresses.find((item) => item?.isDefault || item?.default || item?.isDefault === 1) ||
       addresses[0];
-
     return formatAddress(selected);
   }
 
@@ -238,6 +223,7 @@ function getCustomerDetails(item) {
     user.fullName
   ) || "Valued Client";
 
+  // Comprehensive fallback scan for mobile / phone fields across root, details, user, and customer objects
   const mobile = firstValue(
     item.mobileNumber,
     item.phone,
@@ -255,8 +241,9 @@ function getCustomerDetails(item) {
     customer.mobile,
     customer.customerPhone,
     user.phone,
+    user.mobile,
     user.mobileNumber,
-    user.mobile
+    user.contact
   );
 
   const address = getUserAddress(user, item);
@@ -930,9 +917,6 @@ export default function Appointments() {
               <AlertCircle size={16} /> Backend API / Database Error
             </div>
             <p className="mt-1 font-mono">{apiErrorBanner}</p>
-            <p className="mt-1 text-[11px] opacity-80">
-              Check your backend server logs. The SQL query likely references a column (such as `user.mobile`) that does not exist in your database table.
-            </p>
           </div>
         )}
 
