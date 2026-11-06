@@ -108,61 +108,48 @@ const formatDate = (date, time) => {
 
 function getCustomerDetails(item) {
   const u = typeof item.user === "object" && item.user !== null ? item.user : {};
-  const c = typeof item.customer === "object" && item.customer !== null ? item.customer : (typeof item.customerDetails === "object" && item.customerDetails !== null ? item.customerDetails : {});
-  const client = typeof item.client === "object" && item.client !== null ? item.client : {};
-  const profile = typeof item.profile === "object" && item.profile !== null ? item.profile : {};
+  const c = typeof item.customer === "object" && item.customer !== null ? item.customer : {};
+  const cDetails = typeof item.customerDetails === "object" && item.customerDetails !== null ? item.customerDetails : {};
 
-  const name =
-    item.customerName ||
-    item.userName ||
-    item.name ||
-    (typeof item.customer === "string" ? item.customer : null) ||
-    (typeof item.user === "string" ? item.user : null) ||
-    u.name ||
-    u.fullName ||
-    c.name ||
-    c.fullName ||
-    client.name ||
-    client.fullName ||
-    profile.name ||
-    profile.fullName ||
-    [
-      item.firstName || u.firstName || c.firstName || client.firstName || profile.firstName,
-      item.lastName || u.lastName || c.lastName || client.lastName || profile.lastName,
-    ].filter(Boolean).join(" ") ||
-    "Client";
+  // Aggressive Name Resolution
+  let rawName = 
+    item.customerName || 
+    item.userName || 
+    item.name || 
+    cDetails.name || 
+    c.name || 
+    u.name || 
+    `${item.firstName || cDetails.firstName || ''} ${item.lastName || cDetails.lastName || ''}`.trim();
 
-  const avatar = item.avatar || u.avatar || c.avatar || client.avatar || profile.avatar || "";
+  let finalName = typeof rawName === 'string' ? rawName.replace(/undefined/g, '').trim() : '';
+  if (!finalName || finalName === '') {
+    finalName = "Valued Client";
+  }
 
-  // STRICT & PRIORITY extraction: Directly read actual persisted fields from the backend item first
-  const mobile =
-    item.mobileNumber ||
-    item.phone ||
-    item.phoneNumber ||
-    item.customerPhone ||
-    item.userPhone ||
-    item.contact ||
-    item.contactNumber ||
-    item.telephone ||
-    item.clientPhone ||
-    u.mobileNumber ||
-    u.mobile ||
-    u.phone ||
-    u.phoneNumber ||
-    c.mobileNumber ||
-    c.mobile ||
-    c.phone ||
-    c.phoneNumber ||
-    client.mobileNumber ||
-    client.phone ||
-    profile.mobileNumber ||
-    profile.phone ||
+  // Aggressive Mobile Resolution
+  let rawMobile = 
+    item.mobileNumber || 
+    item.phone || 
+    item.phoneNumber || 
+    cDetails.mobileNumber || 
+    cDetails.phone || 
+    c.mobileNumber || 
+    c.phone || 
+    u.phone || 
+    u.mobileNumber || 
     "";
 
+  let finalMobile = typeof rawMobile === 'string' ? rawMobile.replace(/undefined/g, '').trim() : '';
+
+  // Actively filter out old cached dummy numbers so they don't break the UI
+  if (finalMobile.includes('98765') || finalMobile.includes('dummy') || finalMobile === '+91 98765 43210') {
+    finalMobile = ""; 
+  }
+
   return {
-    name: name.trim(),
-    avatar,
-    mobile: mobile.trim(),
+    name: finalName,
+    avatar: item.avatar || u.avatar || c.avatar || "",
+    mobile: finalMobile
   };
 }
 
@@ -555,11 +542,7 @@ export default function Appointments() {
 
           if (!sameId && !samePass) return item;
 
-          const merged = {
-            ...item,
-            ...updated,
-          };
-
+          const merged = { ...item, ...updated };
           const normalized = normalizeAppointment(merged);
 
           return {
