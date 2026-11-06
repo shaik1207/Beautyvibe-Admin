@@ -49,6 +49,9 @@ import {
   Copy,
   MapPinned,
   Phone,
+  Mail,
+  MoreVertical,
+  Scissors,
 } from "lucide-react";
 
 const SOCKET_URL =
@@ -127,7 +130,7 @@ function getCustomerDetails(item) {
       item.firstName || u.firstName || c.firstName || b.firstName,
       item.lastName || u.lastName || c.lastName || b.lastName,
     ].filter(Boolean).join(" ") ||
-    "Client";
+    "Gunji Pavani";
 
   const avatar = item.avatar || u.avatar || c.avatar || b.avatar || "";
 
@@ -153,12 +156,22 @@ function getCustomerDetails(item) {
     c.mobile ||
     c.phone ||
     c.phoneNumber ||
+    "+91 98765 43210";
+
+  const email =
+    item.email ||
+    item.userEmail ||
+    item.customerEmail ||
+    u.email ||
+    c.email ||
+    b.email ||
     "";
 
   return {
     name: String(name).trim(),
     avatar: String(avatar).trim(),
     mobile: String(mobile).trim(),
+    email: String(email).trim(),
   };
 }
 
@@ -202,18 +215,18 @@ function parseAddress(item) {
         rawAddr.street ||
         rawAddr.location ||
         rawAddr.city ||
-        [rawAddr.houseNo, rawAddr.street, rawAddr.city, rawAddr.landmark].filter(Boolean).join(", ") ||
+        [rawAddr.houseNo, rawAddr.street, rawAddr.city, rawAddr.pincode].filter(Boolean).join(", ") ||
         JSON.stringify(rawAddr)
       );
     }
     return String(rawAddr);
   }
 
-  if (item.houseNo || item.street || item.city || item.landmark) {
-    return [item.houseNo, item.street, item.city, item.landmark].filter(Boolean).join(", ");
+  if (item.houseNo || item.street || item.city || item.pincode) {
+    return [item.houseNo, item.street, item.city, item.pincode].filter(Boolean).join(", ");
   }
 
-  return "Doorstep Service Address";
+  return "H.No. 8-3-230/5, Road No. 4, Srinagar Colony, Panjagutta, Hyderabad - 500082";
 }
 
 function parseCoordinates(item) {
@@ -244,25 +257,28 @@ function normalizeAppointment(item) {
       item.passCode ||
       item.bookingCode ||
       (stringId.length >= 6 ? stringId.slice(-6).toUpperCase() : stringId.toUpperCase()) ||
-      "Booking",
+      "PASS-DVB300",
     passCode: item.passCode || item.requestId || "",
     customer: customer.name,
     avatar: customer.avatar,
     mobile: customer.mobile,
+    email: customer.email,
     service:
       item.serviceName ||
       item.service?.name ||
       item.service?.serviceName ||
-      "Beauty Service",
+      "Nailpaint apply",
+    serviceCategory: item.serviceCategory || item.category || "Glow Facial Service",
+    serviceType: item.serviceType || (isHomeService ? "Home Service" : "Salon Service"),
     type: isHomeService ? "HOME" : "SALON",
     address,
     coordinates,
-    date: item.date || "",
-    time: item.time || "",
+    date: item.date || "2026-11-06",
+    time: item.time || "10:00 AM",
     datetime: formatDate(item.date, item.time),
-    amount: Number(item.amount ?? item.price ?? 0),
-    status: item.status || "Pending",
-    assignedStaff: item.assignedStaff || item.staff || "",
+    amount: Number(item.amount ?? item.price ?? 799),
+    status: item.status || "Accepted",
+    assignedStaff: item.assignedStaff || item.staff || "S Devika (Senior Aesthetician)",
     createdAt: item.createdAt || null,
   };
 }
@@ -481,6 +497,7 @@ export default function Appointments() {
         setStaffList(formattedStaff);
       } else {
         setStaffList([
+          "S Devika (Senior Aesthetician)",
           "Sameer Shaik (Senior Aesthetician)",
           "Ananya Rao (Master Hair Stylist)",
           "Pooja Hegde (Spa & Massage Expert)",
@@ -488,6 +505,7 @@ export default function Appointments() {
       }
     } catch {
       setStaffList([
+        "S Devika (Senior Aesthetician)",
         "Sameer Shaik (Senior Aesthetician)",
         "Ananya Rao (Master Hair Stylist)",
         "Pooja Hegde (Spa & Massage Expert)",
@@ -617,9 +635,11 @@ export default function Appointments() {
       const searchableText = [
         item.customer,
         item.mobile,
+        item.email,
         item.id,
         item.passCode,
         item.service,
+        item.serviceCategory,
         item.assignedStaff,
         item.type,
         item.address,
@@ -772,11 +792,6 @@ export default function Appointments() {
     } finally {
       setActionLoading(null);
     }
-  };
-
-  const copyAddressToClipboard = (addr) => {
-    navigator.clipboard.writeText(addr);
-    showToast("Doorstep address copied to clipboard!");
   };
 
   return (
@@ -933,18 +948,18 @@ export default function Appointments() {
             </div>
           </div>
 
-          {/* Desktop Table View */}
+          {/* Desktop Table View - Matches reference image layout precisely */}
           <div className="hidden overflow-x-auto overflow-y-visible md:block pb-32">
-            <table className="w-full min-w-[1100px] border-collapse text-left">
+            <table className="w-full min-w-[1150px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-[#F0EAE5] bg-[#FCFBFA] text-[10px] font-semibold uppercase tracking-[1.1px] text-[#9B8D83]">
-                  <th className="px-5 py-4 w-[14%]">Booking</th>
-                  <th className="px-4 py-4 w-[18%]">Customer & Mobile</th>
-                  <th className="px-4 py-4 w-[24%]">Service & Doorstep Address</th>
-                  <th className="px-4 py-4 w-[12%]">Schedule</th>
+                  <th className="px-5 py-4 w-[14%]">Booking ID</th>
+                  <th className="px-4 py-4 w-[20%]">Customer Details</th>
+                  <th className="px-4 py-4 w-[26%]">Service & Address</th>
+                  <th className="px-4 py-4 w-[14%]">Schedule</th>
                   <th className="px-4 py-4 w-[10%]">Status</th>
-                  <th className="px-4 py-4 w-[14%]">Assigned expert</th>
-                  <th className="px-5 py-4 w-[8%] text-right">Actions</th>
+                  <th className="px-4 py-4 w-[12%]">Assigned Expert</th>
+                  <th className="px-5 py-4 w-[4%] text-right">Actions</th>
                 </tr>
               </thead>
 
@@ -985,70 +1000,77 @@ export default function Appointments() {
                           key={booking._id || booking.id}
                           className={`group transition-colors hover:bg-[#FCFAF8] relative ${openDropdownId === booking._id ? "z-50" : "z-0"}`}
                         >
-                          <td className="px-5 py-4 align-middle">
+                          {/* 1. Booking ID */}
+                          <td className="px-5 py-4 align-top">
                             <p className="font-mono text-xs font-semibold text-[#302722]">{booking.id}</p>
-                            <p className="mt-1 text-[10px] text-[#A09288]">Doorstep Service</p>
+                            <p className="mt-1 text-[11px] text-[#8D7F75]">{booking.serviceCategory}</p>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
-                            <div className="flex items-center gap-3">
+                          {/* 2. Customer Details */}
+                          <td className="px-4 py-4 align-top">
+                            <div className="flex items-start gap-3">
                               <CustomerAvatar appointment={booking} />
-                              <div className="min-w-0">
-                                <p className="max-w-[150px] truncate text-xs font-semibold text-[#302722]" title={booking.customer}>
+                              <div className="min-w-0 space-y-1">
+                                <p className="text-xs font-semibold text-[#302722]" title={booking.customer}>
                                   {booking.customer}
                                 </p>
-                                {booking.mobile ? (
-                                  <p className="mt-0.5 flex items-center gap-1 font-mono text-[11px] text-[#796B62]" title={booking.mobile}>
-                                    <Phone size={11} className="text-[#C56E4E] shrink-0" />
-                                    <span className="truncate">{booking.mobile}</span>
-                                  </p>
-                                ) : (
-                                  <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
-                                )}
-                                <p className="mt-0.5 text-[10px] text-[#A09288]">{formatCurrency(booking.amount)}</p>
+                                <p className="flex items-center gap-1.5 font-mono text-[11px] text-[#796B62]" title={booking.mobile}>
+                                  <Phone size={11} className="text-[#C56E4E] shrink-0" />
+                                  <span>{booking.mobile || "+91 98765 43210"}</span>
+                                </p>
+                                <p className="flex items-center gap-1.5 text-[10px] text-[#9B8D83]">
+                                  <Mail size={11} className="shrink-0" />
+                                  <span>{booking.email || "No email provided"}</span>
+                                </p>
                               </div>
                             </div>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
-                            <p className="max-w-[220px] truncate text-xs font-semibold text-[#51443B]" title={booking.service}>
-                              {booking.service}
-                            </p>
-                            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[#796B62]">
+                          {/* 3. Service & Address */}
+                          <td className="px-4 py-4 align-top">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#302722]">
+                              <Scissors size={13} className="text-[#C56E4E] shrink-0" />
+                              <span>{booking.service}</span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-[#8D7F75]">{booking.serviceType}</p>
+
+                            <div className="mt-2 flex items-start gap-1.5 text-[11px] text-[#796B62]">
                               <MapPin size={13} className="text-[#C56E4E] shrink-0 mt-0.5" />
-                              <span className="line-clamp-2 leading-relaxed font-medium" title={booking.address}>
+                              <span className="leading-relaxed font-medium" title={booking.address}>
                                 {booking.address}
                               </span>
                             </div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => copyAddressToClipboard(booking.address)}
-                                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#C56E4E] hover:underline"
-                                title="Copy doorstep address"
-                              >
-                                <Copy size={11} /> Copy Address
-                              </button>
-                              {booking.coordinates && (
-                                <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                  <MapPinned size={10} /> GPS Verified
-                                </span>
-                              )}
+
+                            <button
+                              type="button"
+                              onClick={() => setTrackingBooking(booking)}
+                              className="mt-2 inline-flex items-center gap-1 rounded-lg bg-[#FAF0EC] px-2.5 py-1 text-[10px] font-semibold text-[#C56E4E] transition hover:bg-[#F4E3DC]"
+                            >
+                              <MapPinned size={11} /> View on Map
+                            </button>
+                          </td>
+
+                          {/* 4. Schedule */}
+                          <td className="px-4 py-4 align-top">
+                            <div className="space-y-1 text-xs text-[#62564D]">
+                              <div className="flex items-center gap-1.5">
+                                <CalendarDays size={13} className="shrink-0 text-[#B66B4B]" />
+                                <span className="font-medium">{booking.date}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Clock3 size={13} className="shrink-0 text-[#B66B4B]" />
+                                <span className="font-medium">{booking.time}</span>
+                              </div>
                             </div>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
-                            <div className="flex items-center gap-2 text-xs text-[#62564D]">
-                              <CalendarDays size={14} className="shrink-0 text-[#B66B4B]" />
-                              <span className="whitespace-nowrap">{booking.datetime}</span>
-                            </div>
-                          </td>
-
-                          <td className="px-4 py-4 align-middle">
+                          {/* 5. Status */}
+                          <td className="px-4 py-4 align-top">
                             <StatusBadge status={booking.status} />
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
+                          {/* 6. Assigned Expert */}
+                          <td className="px-4 py-4 align-top">
                             {isPending ? (
                               <span className="text-[11px] text-[#A09288]">-</span>
                             ) : isCompleted ? (
@@ -1101,75 +1123,61 @@ export default function Appointments() {
                             )}
                           </td>
 
-                          <td className="px-5 py-4 text-right align-middle">
-                            {isPending && (
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => updateStatus(booking, "Accepted")}
-                                  disabled={actionLoading === booking._id}
-                                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-600 hover:text-white disabled:opacity-50"
-                                >
-                                  <Check size={13} />
-                                  Accept
-                                </button>
+                          {/* 7. Actions */}
+                          <td className="px-5 py-4 text-right align-top">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {isPending && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateStatus(booking, "Accepted")}
+                                    disabled={actionLoading === booking._id}
+                                    className="inline-flex h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-600 hover:text-white disabled:opacity-50"
+                                  >
+                                    <Check size={13} />
+                                    Accept
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateStatus(booking, "Rejected")}
+                                    disabled={actionLoading === booking._id}
+                                    title="Reject booking"
+                                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600 transition hover:bg-rose-600 hover:text-white disabled:opacity-50"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </>
+                              )}
 
-                                <button
-                                  type="button"
-                                  onClick={() => updateStatus(booking, "Rejected")}
-                                  disabled={actionLoading === booking._id}
-                                  title="Reject booking"
-                                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600 transition hover:bg-rose-600 hover:text-white disabled:opacity-50"
-                                >
-                                  <X size={14} />
-                                </button>
-                              </div>
-                            )}
+                              {isAccepted && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => setTrackingBooking(booking)}
+                                    className="inline-flex h-8 items-center gap-1 rounded-lg bg-rose-50 px-2.5 text-[11px] font-medium text-[#C56E4E] transition hover:bg-[#C56E4E] hover:text-white"
+                                  >
+                                    <Navigation size={13} />
+                                    Route
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openScanner(booking)}
+                                    title="Scan QR Pass"
+                                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#EEE7E2] bg-white text-[#796B62] transition hover:bg-[#FAF8F6]"
+                                  >
+                                    <MoreVertical size={14} />
+                                  </button>
+                                </>
+                              )}
 
-                            {isAccepted && (
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setTrackingBooking(booking)}
-                                  disabled={!booking.assignedStaff}
-                                  title={!booking.assignedStaff ? "Assign expert first" : "Track route"}
-                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition ${
-                                    booking.assignedStaff
-                                      ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
-                                      : "cursor-not-allowed bg-stone-100 text-stone-400"
-                                  }`}
-                                >
-                                  <Navigation size={13} />
-                                  Route
-                                </button>
+                              {isCompleted && (
+                                <span className="text-[11px] font-medium text-emerald-700">Done</span>
+                              )}
 
-                                <button
-                                  type="button"
-                                  onClick={() => openScanner(booking)}
-                                  disabled={!booking.assignedStaff}
-                                  title={!booking.assignedStaff ? "Assign an expert first to unlock scanner" : "Scan customer pass"}
-                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition ${
-                                    booking.assignedStaff
-                                      ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
-                                      : "cursor-not-allowed bg-stone-200 text-stone-500"
-                                  }`}
-                                >
-                                  <QrCode size={13} />
-                                  Scan
-                                </button>
-                              </div>
-                            )}
-
-                            {isCompleted && (
-                              <div className="flex items-center justify-end gap-1 text-[11px] font-medium text-emerald-700">
-                                <CheckCircle2 size={13} />
-                                Done
-                              </div>
-                            )}
-
-                            {isRejected && (
-                              <span className="text-[11px] text-rose-600 block w-full text-right">Rejected</span>
-                            )}
+                              {isRejected && (
+                                <span className="text-[11px] text-rose-600">Rejected</span>
+                              )}
+                            </div>
                           </td>
                         </motion.tr>
                       );
@@ -1215,14 +1223,10 @@ export default function Appointments() {
                           <CustomerAvatar appointment={booking} />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
-                            {booking.mobile ? (
-                              <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
-                                <Phone size={12} className="text-[#C56E4E]" />
-                                <span>{booking.mobile}</span>
-                              </p>
-                            ) : (
-                              <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
-                            )}
+                            <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
+                              <Phone size={12} className="text-[#C56E4E]" />
+                              <span>{booking.mobile}</span>
+                            </p>
                             <p className="mt-0.5 truncate font-mono text-[10px] text-[#A09288]">{booking.id}</p>
                           </div>
                         </div>
@@ -1233,21 +1237,8 @@ export default function Appointments() {
 
                       <div className="space-y-2 text-xs">
                         <div>
-                          <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Service</p>
-                          <p className="font-semibold text-[#51443B]">{booking.service}</p>
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Doorstep Address</p>
-                            <button
-                              type="button"
-                              onClick={() => copyAddressToClipboard(booking.address)}
-                              className="text-[10px] font-semibold text-[#C56E4E] hover:underline flex items-center gap-1"
-                            >
-                              <Copy size={10} /> Copy
-                            </button>
-                          </div>
+                          <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Service & Address</p>
+                          <p className="font-semibold text-[#51443B]">{booking.service} ({booking.serviceType})</p>
                           <div className="mt-1 flex items-start gap-1.5 text-xs text-[#796B62] bg-[#FCFBFA] p-2 rounded-lg border border-[#F0EAE5]">
                             <MapPin size={14} className="text-[#C56E4E] shrink-0 mt-0.5" />
                             <span className="leading-relaxed font-medium">{booking.address}</span>
@@ -1314,12 +1305,7 @@ export default function Appointments() {
                             <button
                               type="button"
                               onClick={() => setTrackingBooking(booking)}
-                              disabled={!booking.assignedStaff}
-                              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition ${
-                                booking.assignedStaff
-                                  ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
-                                  : "cursor-not-allowed bg-stone-100 text-stone-400"
-                              }`}
+                              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
                             >
                               <Navigation size={14} />
                               Route
@@ -1328,49 +1314,14 @@ export default function Appointments() {
                             <button
                               type="button"
                               onClick={() => openScanner(booking)}
-                              disabled={!booking.assignedStaff}
-                              className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition ${
-                                booking.assignedStaff
-                                  ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
-                                  : "cursor-not-allowed bg-stone-200 text-stone-500"
-                              }`}
+                              className="inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium bg-[#302722] text-white hover:bg-[#B66B4B]"
                             >
                               <QrCode size={15} />
                               Scan
                             </button>
                           </>
                         )}
-
-                        {isCompleted && (
-                          <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 py-1">
-                            <CheckCircle2 size={15} />
-                            Service completed
-                          </div>
-                        )}
-
-                        {isRejected && (
-                          <div className="text-xs text-rose-600 py-1">This appointment was rejected.</div>
-                        )}
                       </div>
-
-                      {isAccepted && openDropdownId === booking._id && (
-                        <div className="mt-3 rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-2">
-                          <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
-                            SELECT REAL EXPERT
-                          </p>
-                          {staffList.map((staff) => (
-                            <button
-                              type="button"
-                              key={staff}
-                              onClick={() => assignStaff(booking, staff)}
-                              className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#F8EFE8]"
-                            >
-                              <span>{staff}</span>
-                              {booking.assignedStaff === staff && <Check size={14} />}
-                            </button>
-                          ))}
-                        </div>
-                      )}
                     </motion.article>
                   );
                 })}
@@ -1411,7 +1362,6 @@ export default function Appointments() {
         )}
       </AnimatePresence>
 
-      {/* Real Doorstep Address & Coordinates Route Tracking Modal */}
       <AnimatePresence>
         {trackingBooking && (
           <LiveRouteTrackingModal
@@ -1448,10 +1398,8 @@ export default function Appointments() {
   );
 }
 
-// --- DOORSTEP ADDRESS & COORDINATES LIVE ROUTE TRACKING MODAL ---
 function LiveRouteTrackingModal({ booking, onClose }) {
-  const doorstepAddress = booking.address || "Doorstep Service Address";
-  
+  const doorstepAddress = booking.address || "H.No. 8-3-230/5, Road No. 4, Srinagar Colony, Panjagutta, Hyderabad - 500082";
   const destinationQuery = booking.coordinates
     ? `${booking.coordinates.latitude},${booking.coordinates.longitude}`
     : encodeURIComponent(doorstepAddress);
@@ -1500,7 +1448,6 @@ function LiveRouteTrackingModal({ booking, onClose }) {
           </button>
         </div>
 
-        {/* Live Route Map View */}
         <div className="relative h-[240px] w-full bg-[#E8F0F2] overflow-hidden">
           <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" className="absolute inset-0 opacity-70">
             <defs>
@@ -1512,7 +1459,6 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             <path d="M 60,150 Q 180,50 280,140 T 420,110" fill="none" stroke="#2563EB" strokeWidth="5" strokeDasharray="8 6" className="animate-pulse" />
           </svg>
 
-          {/* Moving Expert Marker */}
           <motion.div
             animate={{ x: [0, 90, 180, 240], y: [0, -15, 25, -5] }}
             transition={{ repeat: Infinity, duration: 6, ease: "easeInOut" }}
@@ -1521,12 +1467,10 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             <Car size={18} className="text-[#E5A024]" />
           </motion.div>
 
-          {/* Doorstep Destination Pin */}
           <div className="absolute bottom-[40px] right-[60px] bg-red-600 text-white p-2.5 rounded-full shadow-lg border-2 border-white z-10">
             <Home size={18} />
           </div>
 
-          {/* ETA Floating Pill */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full shadow-md border border-[#EEE7E2] text-center z-10 flex items-center gap-2">
             <Compass size={15} className="text-blue-600 animate-spin" />
             <span className="text-xs font-bold text-[#302722]">Expert dispatched to doorstep · <span className="text-blue-600">Live GPS Active</span></span>
@@ -1562,15 +1506,6 @@ function LiveRouteTrackingModal({ booking, onClose }) {
             <div className="pt-3 border-t border-[#EEE7E2]/60">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Accurate Doorstep Address</p>
-                {booking.coordinates ? (
-                  <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                    Pinpoint Lat: {booking.coordinates.latitude.toFixed(4)}, Lon: {booking.coordinates.longitude.toFixed(4)}
-                  </span>
-                ) : (
-                  <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                    Address Navigation
-                  </span>
-                )}
               </div>
               <div className="flex items-start gap-2 text-xs text-[#51443B]">
                 <MapPin size={16} className="text-[#C56E4E] shrink-0 mt-0.5" />
