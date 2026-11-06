@@ -109,6 +109,8 @@ const formatDate = (date, time) => {
 function getCustomerDetails(item) {
   const u = typeof item.user === "object" && item.user !== null ? item.user : {};
   const c = typeof item.customer === "object" && item.customer !== null ? item.customer : (typeof item.customerDetails === "object" && item.customerDetails !== null ? item.customerDetails : {});
+  const client = typeof item.client === "object" && item.client !== null ? item.client : {};
+  const profile = typeof item.profile === "object" && item.profile !== null ? item.profile : {};
 
   const name =
     item.customerName ||
@@ -120,28 +122,56 @@ function getCustomerDetails(item) {
     u.fullName ||
     c.name ||
     c.fullName ||
+    client.name ||
+    client.fullName ||
+    profile.name ||
+    profile.fullName ||
     [
-      item.firstName || u.firstName || c.firstName,
-      item.lastName || u.lastName || c.lastName,
+      item.firstName || u.firstName || c.firstName || client.firstName || profile.firstName,
+      item.lastName || u.lastName || c.lastName || client.lastName || profile.lastName,
     ].filter(Boolean).join(" ") ||
     "Client";
 
-  const avatar = item.avatar || u.avatar || c.avatar || "";
+  const avatar = item.avatar || u.avatar || c.avatar || client.avatar || profile.avatar || "";
 
+  // Exhaustive check across all potential database field name variations for phone/mobile
   const mobile =
     item.mobileNumber ||
     item.mobile ||
     item.phone ||
     item.phoneNumber ||
     item.customerPhone ||
+    item.userPhone ||
+    item.contact ||
+    item.contactNumber ||
+    item.telephone ||
+    item.clientPhone ||
     u.mobileNumber ||
     u.mobile ||
     u.phone ||
     u.phoneNumber ||
+    u.customerPhone ||
+    u.userPhone ||
+    u.contact ||
+    u.contactNumber ||
+    u.telephone ||
     c.mobileNumber ||
     c.mobile ||
     c.phone ||
     c.phoneNumber ||
+    c.customerPhone ||
+    c.userPhone ||
+    c.contact ||
+    c.contactNumber ||
+    c.telephone ||
+    client.mobileNumber ||
+    client.mobile ||
+    client.phone ||
+    client.phoneNumber ||
+    profile.mobileNumber ||
+    profile.mobile ||
+    profile.phone ||
+    profile.phoneNumber ||
     "";
 
   return {
@@ -540,15 +570,12 @@ export default function Appointments() {
 
           if (!sameId && !samePass) return item;
 
-          const normalized = normalizeAppointment({
+          const merged = {
             ...item,
             ...updated,
-            user: updated.user || {
-              name: item.customer,
-              avatar: item.avatar,
-              phone: item.mobile,
-            },
-          });
+          };
+
+          const normalized = normalizeAppointment(merged);
 
           return {
             ...item,
