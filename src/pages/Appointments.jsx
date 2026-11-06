@@ -50,7 +50,6 @@ const STATUS_STYLES = {
 const isObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-// PERMANENT FIX: Scrub broken undefined strings, but ALLOW test data
 const clean = (value) => {
   if (value === null || value === undefined) return "";
   if (typeof value !== "string" && typeof value !== "number") return "";
@@ -60,11 +59,17 @@ const clean = (value) => {
 
   const lower = result.toLowerCase();
   
-  // 1. Destroy all variations of null/undefined bugs
+  // Destroy all variations of null/undefined bugs
   if (/^(null|undefined|n\/a|na|undefined undefined|null null)$/.test(lower)) return "";
   
-  // NOTE: The aggressive filter for "98765" and "dummy" has been REMOVED here
-  // so your test data will actually render correctly!
+  // Filter out dummy/mock phone numbers if desired, or keep valid strings
+  if (
+    result.includes("9876543210") || 
+    result === "+91 98765 43210" || 
+    result === "98765 43210"
+  ) {
+    return "";
+  }
 
   return result;
 };
@@ -202,15 +207,13 @@ function getCustomerDetails(item) {
     details.name,
     customer.name,
     user.name,
+    user.fullName,
+    customer.fullName,
     [
-      item.firstName || details.firstName || user.firstName || "",
-      item.lastName || details.lastName || user.lastName || "",
-    ].filter(Boolean).join(" "),
-    [
-      customer.firstName || "",
-      customer.lastName || "",
+      item.firstName || details.firstName || user.firstName || customer.firstName || "",
+      item.lastName || details.lastName || user.lastName || customer.lastName || "",
     ].filter(Boolean).join(" ")
-  ) || "Valued Client";
+  ) || clean(user.email) || clean(customer.email) || "Client";
 
   const mobile = firstValue(
     item.mobileNumber,
@@ -221,7 +224,8 @@ function getCustomerDetails(item) {
     customer.mobileNumber,
     customer.phone,
     user.phone,
-    user.mobileNumber
+    user.mobileNumber,
+    user.mobile
   );
 
   const address = getUserAddress(user, item);
