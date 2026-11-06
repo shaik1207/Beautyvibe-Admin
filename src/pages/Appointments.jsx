@@ -81,15 +81,17 @@ const formatCurrency = (amount) =>
     maximumFractionDigits: 0,
   }).format(Number(amount) || 0);
 
-const getInitials = (name = "Customer") =>
-  name
+const getInitials = (name = "") => {
+  if (!name) return "CU";
+  return name
     .trim()
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0])
     .join("")
-    .toUpperCase() || "CU";
+    .toUpperCase();
+};
 
 const formatDate = (date, time) => {
   if (!date) return "Date not available";
@@ -109,6 +111,7 @@ const formatDate = (date, time) => {
   return `${formatted}${time ? ` · ${time}` : ""}`;
 };
 
+// --- STRICT REAL DATA EXTRACTORS (NO MOCK FALLBACKS) ---
 function getCustomerDetails(item) {
   const u = typeof item.user === "object" && item.user !== null ? item.user : {};
   const c = typeof item.customer === "object" && item.customer !== null ? item.customer : (typeof item.customerDetails === "object" && item.customerDetails !== null ? item.customerDetails : {});
@@ -130,7 +133,7 @@ function getCustomerDetails(item) {
       item.firstName || u.firstName || c.firstName || b.firstName,
       item.lastName || u.lastName || c.lastName || b.lastName,
     ].filter(Boolean).join(" ") ||
-    "Gunji Pavani";
+    "";
 
   const avatar = item.avatar || u.avatar || c.avatar || b.avatar || "";
 
@@ -156,7 +159,7 @@ function getCustomerDetails(item) {
     c.mobile ||
     c.phone ||
     c.phoneNumber ||
-    "+91 98765 43210";
+    "";
 
   const email =
     item.email ||
@@ -226,7 +229,7 @@ function parseAddress(item) {
     return [item.houseNo, item.street, item.city, item.pincode].filter(Boolean).join(", ");
   }
 
-  return "H.No. 8-3-230/5, Road No. 4, Srinagar Colony, Panjagutta, Hyderabad - 500082";
+  return "";
 }
 
 function parseCoordinates(item) {
@@ -256,10 +259,11 @@ function normalizeAppointment(item) {
     id:
       item.passCode ||
       item.bookingCode ||
+      item.bookingId ||
       (stringId.length >= 6 ? stringId.slice(-6).toUpperCase() : stringId.toUpperCase()) ||
-      "PASS-DVB300",
+      "BOOKING",
     passCode: item.passCode || item.requestId || "",
-    customer: customer.name,
+    customer: customer.name || "Unnamed Customer",
     avatar: customer.avatar,
     mobile: customer.mobile,
     email: customer.email,
@@ -267,18 +271,19 @@ function normalizeAppointment(item) {
       item.serviceName ||
       item.service?.name ||
       item.service?.serviceName ||
-      "Nailpaint apply",
-    serviceCategory: item.serviceCategory || item.category || "Glow Facial Service",
+      item.serviceTitle ||
+      "Service",
+    serviceCategory: item.serviceCategory || item.category || item.serviceType || "Beauty Service",
     serviceType: item.serviceType || (isHomeService ? "Home Service" : "Salon Service"),
     type: isHomeService ? "HOME" : "SALON",
     address,
     coordinates,
-    date: item.date || "2026-11-06",
-    time: item.time || "10:00 AM",
+    date: item.date || "",
+    time: item.time || "",
     datetime: formatDate(item.date, item.time),
-    amount: Number(item.amount ?? item.price ?? 799),
-    status: item.status || "Accepted",
-    assignedStaff: item.assignedStaff || item.staff || "S Devika (Senior Aesthetician)",
+    amount: Number(item.amount ?? item.price ?? 0),
+    status: item.status || "Pending",
+    assignedStaff: item.assignedStaff || item.staff || "",
     createdAt: item.createdAt || null,
   };
 }
@@ -496,20 +501,10 @@ export default function Appointments() {
         const formattedStaff = list.map((s) => `${s.firstName || ""} ${s.lastName || ""} (${s.role || "Expert"})`.trim());
         setStaffList(formattedStaff);
       } else {
-        setStaffList([
-          "S Devika (Senior Aesthetician)",
-          "Sameer Shaik (Senior Aesthetician)",
-          "Ananya Rao (Master Hair Stylist)",
-          "Pooja Hegde (Spa & Massage Expert)",
-        ]);
+        setStaffList([]);
       }
     } catch {
-      setStaffList([
-        "S Devika (Senior Aesthetician)",
-        "Sameer Shaik (Senior Aesthetician)",
-        "Ananya Rao (Master Hair Stylist)",
-        "Pooja Hegde (Spa & Massage Expert)",
-      ]);
+      setStaffList([]);
     }
   }, []);
 
@@ -948,7 +943,7 @@ export default function Appointments() {
             </div>
           </div>
 
-          {/* Desktop Table View - Matches reference image layout precisely */}
+          {/* Desktop Table View */}
           <div className="hidden overflow-x-auto overflow-y-visible md:block pb-32">
             <table className="w-full min-w-[1150px] border-collapse text-left">
               <thead>
@@ -1000,13 +995,11 @@ export default function Appointments() {
                           key={booking._id || booking.id}
                           className={`group transition-colors hover:bg-[#FCFAF8] relative ${openDropdownId === booking._id ? "z-50" : "z-0"}`}
                         >
-                          {/* 1. Booking ID */}
                           <td className="px-5 py-4 align-top">
                             <p className="font-mono text-xs font-semibold text-[#302722]">{booking.id}</p>
                             <p className="mt-1 text-[11px] text-[#8D7F75]">{booking.serviceCategory}</p>
                           </td>
 
-                          {/* 2. Customer Details */}
                           <td className="px-4 py-4 align-top">
                             <div className="flex items-start gap-3">
                               <CustomerAvatar appointment={booking} />
@@ -1014,10 +1007,14 @@ export default function Appointments() {
                                 <p className="text-xs font-semibold text-[#302722]" title={booking.customer}>
                                   {booking.customer}
                                 </p>
-                                <p className="flex items-center gap-1.5 font-mono text-[11px] text-[#796B62]" title={booking.mobile}>
-                                  <Phone size={11} className="text-[#C56E4E] shrink-0" />
-                                  <span>{booking.mobile || "+91 98765 43210"}</span>
-                                </p>
+                                {booking.mobile ? (
+                                  <p className="flex items-center gap-1.5 font-mono text-[11px] text-[#796B62]" title={booking.mobile}>
+                                    <Phone size={11} className="text-[#C56E4E] shrink-0" />
+                                    <span>{booking.mobile}</span>
+                                  </p>
+                                ) : (
+                                  <p className="text-[10px] text-[#A09288]">No phone provided</p>
+                                )}
                                 <p className="flex items-center gap-1.5 text-[10px] text-[#9B8D83]">
                                   <Mail size={11} className="shrink-0" />
                                   <span>{booking.email || "No email provided"}</span>
@@ -1026,7 +1023,6 @@ export default function Appointments() {
                             </div>
                           </td>
 
-                          {/* 3. Service & Address */}
                           <td className="px-4 py-4 align-top">
                             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#302722]">
                               <Scissors size={13} className="text-[#C56E4E] shrink-0" />
@@ -1037,39 +1033,38 @@ export default function Appointments() {
                             <div className="mt-2 flex items-start gap-1.5 text-[11px] text-[#796B62]">
                               <MapPin size={13} className="text-[#C56E4E] shrink-0 mt-0.5" />
                               <span className="leading-relaxed font-medium" title={booking.address}>
-                                {booking.address}
+                                {booking.address || "No doorstep address specified"}
                               </span>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => setTrackingBooking(booking)}
-                              className="mt-2 inline-flex items-center gap-1 rounded-lg bg-[#FAF0EC] px-2.5 py-1 text-[10px] font-semibold text-[#C56E4E] transition hover:bg-[#F4E3DC]"
-                            >
-                              <MapPinned size={11} /> View on Map
-                            </button>
+                            {booking.address && (
+                              <button
+                                type="button"
+                                onClick={() => setTrackingBooking(booking)}
+                                className="mt-2 inline-flex items-center gap-1 rounded-lg bg-[#FAF0EC] px-2.5 py-1 text-[10px] font-semibold text-[#C56E4E] transition hover:bg-[#F4E3DC]"
+                              >
+                                <MapPinned size={11} /> View on Map
+                              </button>
+                            )}
                           </td>
 
-                          {/* 4. Schedule */}
                           <td className="px-4 py-4 align-top">
                             <div className="space-y-1 text-xs text-[#62564D]">
                               <div className="flex items-center gap-1.5">
                                 <CalendarDays size={13} className="shrink-0 text-[#B66B4B]" />
-                                <span className="font-medium">{booking.date}</span>
+                                <span className="font-medium">{booking.date || "Date not set"}</span>
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <Clock3 size={13} className="shrink-0 text-[#B66B4B]" />
-                                <span className="font-medium">{booking.time}</span>
+                                <span className="font-medium">{booking.time || "Time not set"}</span>
                               </div>
                             </div>
                           </td>
 
-                          {/* 5. Status */}
                           <td className="px-4 py-4 align-top">
                             <StatusBadge status={booking.status} />
                           </td>
 
-                          {/* 6. Assigned Expert */}
                           <td className="px-4 py-4 align-top">
                             {isPending ? (
                               <span className="text-[11px] text-[#A09288]">-</span>
@@ -1103,19 +1098,23 @@ export default function Appointments() {
                                       className="absolute left-0 top-full mt-2 w-[240px] rounded-xl border border-[#EEE7E2] bg-white p-2 shadow-xl z-50"
                                     >
                                       <p className="px-2 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
-                                        SELECT REAL EXPERT
+                                        SELECT EXPERT
                                       </p>
-                                      {staffList.map((staff) => (
-                                        <button
-                                          type="button"
-                                          key={staff}
-                                          onClick={() => assignStaff(booking, staff)}
-                                          className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] transition hover:bg-[#FAF3EE] hover:text-[#AD6243]"
-                                        >
-                                          <span>{staff}</span>
-                                          {booking.assignedStaff === staff && <Check size={14} />}
-                                        </button>
-                                      ))}
+                                      {staffList.length > 0 ? (
+                                        staffList.map((staff) => (
+                                          <button
+                                            type="button"
+                                            key={staff}
+                                            onClick={() => assignStaff(booking, staff)}
+                                            className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] transition hover:bg-[#FAF3EE] hover:text-[#AD6243]"
+                                          >
+                                            <span>{staff}</span>
+                                            {booking.assignedStaff === staff && <Check size={14} />}
+                                          </button>
+                                        ))
+                                      ) : (
+                                        <p className="px-2 py-2 text-[11px] text-stone-400">No staff loaded</p>
+                                      )}
                                     </motion.div>
                                   )}
                                 </AnimatePresence>
@@ -1123,7 +1122,6 @@ export default function Appointments() {
                             )}
                           </td>
 
-                          {/* 7. Actions */}
                           <td className="px-5 py-4 text-right align-top">
                             <div className="flex items-center justify-end gap-1.5">
                               {isPending && (
@@ -1223,10 +1221,14 @@ export default function Appointments() {
                           <CustomerAvatar appointment={booking} />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
-                            <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
-                              <Phone size={12} className="text-[#C56E4E]" />
-                              <span>{booking.mobile}</span>
-                            </p>
+                            {booking.mobile ? (
+                              <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
+                                <Phone size={12} className="text-[#C56E4E]" />
+                                <span>{booking.mobile}</span>
+                              </p>
+                            ) : (
+                              <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
+                            )}
                             <p className="mt-0.5 truncate font-mono text-[10px] text-[#A09288]">{booking.id}</p>
                           </div>
                         </div>
@@ -1241,7 +1243,7 @@ export default function Appointments() {
                           <p className="font-semibold text-[#51443B]">{booking.service} ({booking.serviceType})</p>
                           <div className="mt-1 flex items-start gap-1.5 text-xs text-[#796B62] bg-[#FCFBFA] p-2 rounded-lg border border-[#F0EAE5]">
                             <MapPin size={14} className="text-[#C56E4E] shrink-0 mt-0.5" />
-                            <span className="leading-relaxed font-medium">{booking.address}</span>
+                            <span className="leading-relaxed font-medium">{booking.address || "No address provided"}</span>
                           </div>
                         </div>
 
@@ -1399,7 +1401,7 @@ export default function Appointments() {
 }
 
 function LiveRouteTrackingModal({ booking, onClose }) {
-  const doorstepAddress = booking.address || "H.No. 8-3-230/5, Road No. 4, Srinagar Colony, Panjagutta, Hyderabad - 500082";
+  const doorstepAddress = booking.address || "Address not provided";
   const destinationQuery = booking.coordinates
     ? `${booking.coordinates.latitude},${booking.coordinates.longitude}`
     : encodeURIComponent(doorstepAddress);
