@@ -208,7 +208,6 @@ function getCustomerDetails(item) {
   const customer = isObject(item.customer) ? item.customer : {};
   const details = isObject(item.customerDetails) ? item.customerDetails : {};
 
-  // Resolve explicit First Name and Last Name first
   const firstName = firstValue(
     item.firstName,
     details.firstName,
@@ -225,7 +224,6 @@ function getCustomerDetails(item) {
 
   const combinedName = [firstName, lastName].filter(Boolean).join(" ").trim();
 
-  // Extract Name strictly prioritizing combined First + Last Name and rejecting Emails
   const fullName = firstValue(
     combinedName,
     item.customerName,
@@ -240,7 +238,6 @@ function getCustomerDetails(item) {
     user.fullName
   ) || "Valued Client";
 
-  // Comprehensive mobile number lookup across all schema variations and nested objects
   const mobile = firstValue(
     item.mobileNumber,
     item.phone,
@@ -305,9 +302,7 @@ function normalizeAppointment(item = {}) {
   const idString = String(rawId);
 
   const type = String(item.type || item.serviceType || "").toUpperCase();
-
   const isHomeService = type === "HOME" || item.isHomeService === true;
-
   const status = firstValue(item.status, "Pending");
 
   return {
@@ -511,6 +506,7 @@ export default function Appointments() {
   const [trackingBooking, setTrackingBooking] = useState(null);
   const [toast, setToast] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
+  const [apiErrorBanner, setApiErrorBanner] = useState(null);
 
   const toastTimer = useRef(null);
 
@@ -548,7 +544,7 @@ export default function Appointments() {
 
       setStaffList([...new Set(names)]);
     } catch (error) {
-      console.error("Staff API error:", error);
+      console.warn("Staff API warning:", error);
       setStaffList([]);
     }
   }, []);
@@ -558,6 +554,7 @@ export default function Appointments() {
       try {
         if (quiet) setRefreshing(true);
         else setLoading(true);
+        setApiErrorBanner(null);
 
         const response = await API.get("/api/appointments");
         const payload =
@@ -572,13 +569,21 @@ export default function Appointments() {
         setAppointments(payload.map(normalizeAppointment));
       } catch (error) {
         console.error("Failed to fetch appointments:", error);
+        const serverMsg = error.response?.data?.message || error.message || "";
+        
+        if (error.response?.status === 500) {
+          setApiErrorBanner(
+            `Server 500 Error: ${serverMsg || "Database query failed (Check backend logs for unknown column references)"}`
+          );
+        }
+
         showToast(
           error.response?.status === 401
             ? "Authentication required. Please sign in again."
-            : error.response?.data?.message ||
-              "Unable to load appointments. Check your API connection.",
+            : "Unable to load appointments. Check backend connection.",
           "error"
         );
+        setAppointments([]);
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -591,50 +596,57 @@ export default function Appointments() {
     fetchAppointments();
     fetchStaffMembers();
 
-    const socket = io(SOCKET_URL, {
-      transports: ["websocket", "polling"],
-      reconnection: true,
-    });
-
-    socket.on("connect", () => setSocketConnected(true));
-    socket.on("disconnect", () => setSocketConnected(false));
-
-    socket.on("newAppointment", (booking) => {
-      const formatted = normalizeAppointment(booking);
-
-      setAppointments((current) => {
-        if (
-          formatted._id &&
-          current.some((item) => String(item._id) === String(formatted._id))
-        ) {
-          return current;
-        }
-        return [formatted, ...current];
+    let socket;
+    try {
+      socket = io(SOCKET_URL, {
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionAttempts: 5,
       });
 
-      showToast(`New booking received: ${formatted.id}`);
-    });
+      socket.on("connect", () => setSocketConnected(true));
+      socket.on("disconnect", () => setSocketConnected(false));
+      socket.on("connect_error", () => setSocketConnected(false));
 
-    socket.on("appointmentUpdated", (updated) => {
-      setAppointments((current) =>
-        current.map((item) => {
-          const sameId =
-            item._id &&
-            updated._id &&
-            String(item._id) === String(updated._id);
+      socket.on("newAppointment", (booking) => {
+        const formatted = normalizeAppointment(booking);
 
-          if (!sameId) return item;
+        setAppointments((current) => {
+          if (
+            formatted._id &&
+            current.some((item) => String(item._id) === String(formatted._id))
+          ) {
+            return current;
+          }
+          return [formatted, ...current];
+        });
 
-          return {
-            ...item,
-            ...normalizeAppointment({ ...item, ...updated }),
-          };
-        })
-      );
-    });
+        showToast(`New booking received: ${formatted.id}`);
+      });
+
+      socket.on("appointmentUpdated", (updated) => {
+        setAppointments((current) =>
+          current.map((item) => {
+            const sameId =
+              item._id &&
+              updated._id &&
+              String(item._id) === String(updated._id);
+
+            if (!sameId) return item;
+
+            return {
+              ...item,
+              ...normalizeAppointment({ ...item, ...updated }),
+            };
+          })
+        );
+      });
+    } catch (err) {
+      console.warn("Socket initialization error:", err);
+    }
 
     return () => {
-      socket.disconnect();
+      if (socket) socket.disconnect();
       clearTimeout(toastTimer.current);
     };
   }, [fetchAppointments, fetchStaffMembers, showToast]);
@@ -911,6 +923,18 @@ export default function Appointments() {
             </button>
           </div>
         </motion.header>
+
+        {apiErrorBanner && (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-800 shadow-sm">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertCircle size={16} /> Backend API / Database Error
+            </div>
+            <p className="mt-1 font-mono">{apiErrorBanner}</p>
+            <p className="mt-1 text-[11px] opacity-80">
+              Check your backend server logs. The SQL query likely references a column (such as `user.mobile`) that does not exist in your database table.
+            </p>
+          </div>
+        )}
 
         <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard
