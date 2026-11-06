@@ -59,10 +59,10 @@ const clean = (value) => {
 
   const lower = result.toLowerCase();
   
-  // Destroy all variations of null/undefined bugs
-  if (/^(null|undefined|n\/a|na|undefined undefined|null null)$/.test(lower)) return "";
+  if (/^(null|undefined|n\/a|na|undefined undefined|null null|valued client)$/.test(lower)) {
+    return "";
+  }
   
-  // Filter out dummy/mock phone numbers if desired, or keep valid strings
   if (
     result.includes("9876543210") || 
     result === "+91 98765 43210" || 
@@ -196,10 +196,9 @@ function getUserAddress(user, appointment) {
 function getCustomerDetails(item) {
   const user = isObject(item.user) ? item.user : {};
   const customer = isObject(item.customer) ? item.customer : {};
-  const details = isObject(item.customerDetails)
-    ? item.customerDetails
-    : {};
+  const details = isObject(item.customerDetails) ? item.customerDetails : {};
 
+  // Extract Name across all possible nested models/fields
   const fullName = firstValue(
     item.customerName,
     item.userName,
@@ -212,17 +211,23 @@ function getCustomerDetails(item) {
     [
       item.firstName || details.firstName || user.firstName || customer.firstName || "",
       item.lastName || details.lastName || user.lastName || customer.lastName || "",
-    ].filter(Boolean).join(" ")
-  ) || clean(user.email) || clean(customer.email) || "Client";
+    ].filter(Boolean).join(" "),
+    user.email,
+    customer.email
+  ) || "Walk-in Client";
 
+  // Extract Mobile Phone across all possible nested models/fields
   const mobile = firstValue(
     item.mobileNumber,
     item.phone,
     item.phoneNumber,
+    item.mobile,
     details.mobileNumber,
     details.phone,
+    details.mobile,
     customer.mobileNumber,
     customer.phone,
+    customer.mobile,
     user.phone,
     user.mobileNumber,
     user.mobile
@@ -1055,7 +1060,7 @@ export default function Appointments() {
                               <CustomerAvatar appointment={booking} />
                               <div className="min-w-0">
                                 <p className="max-w-[160px] truncate text-xs font-semibold text-[#302722]">
-                                  {booking.customer || "Not provided"}
+                                  {booking.customer}
                                 </p>
 
                                 {booking.mobile ? (
@@ -1268,7 +1273,7 @@ export default function Appointments() {
                       <CustomerAvatar appointment={booking} />
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-[#302722]">
-                          {booking.customer || "Not provided"}
+                          {booking.customer}
                         </p>
                         {booking.mobile ? (
                           <a
@@ -1568,7 +1573,7 @@ function RouteModal({ booking, onClose }) {
               Customer
             </p>
             <p className="mt-1 text-sm font-semibold text-[#302722]">
-              {booking.customer || "Not provided"}
+              {booking.customer}
             </p>
             {booking.mobile && (
               <a
@@ -1816,7 +1821,7 @@ function QRScannerModal({ booking, onClose, onVerified }) {
         <div className="p-5 sm:p-6">
           <div className="mb-4 rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-3">
             <p className="text-sm font-semibold text-[#302722]">
-              {booking.customer || "Not provided"}
+              {booking.customer}
             </p>
             <p className="mt-1 text-xs text-[#796B62]">
               {booking.service} · {booking.id}
