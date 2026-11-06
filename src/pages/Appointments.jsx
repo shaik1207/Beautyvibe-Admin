@@ -1,16 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  Html5Qrcode,
-  Html5QrcodeSupportedFormats,
-} from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { io } from "socket.io-client";
 import API from "../utils/axios";
 
@@ -28,8 +18,14 @@ import {
   ChevronRight,
   Clock3,
   CreditCard,
+  Copy,
+  ExternalLink,
   Filter,
   MapPin,
+  MapPinned,
+  Navigation,
+  Phone,
+  QrCode,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -37,38 +33,56 @@ import {
   UserRound,
   Users,
   X,
-  QrCode,
-  ScanLine,
-  ChevronFirst,
-  ChevronLast,
-  Navigation,
-  Compass,
-  Car,
-  ExternalLink,
-  Home,
-  Copy,
-  MapPinned,
-  Phone,
 } from "lucide-react";
 
-const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
-
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 const PAGE_SIZE = 10;
 
-const FILTERS = [
-  "All",
-  "Pending",
-  "Accepted",
-  "Completed",
-  "Rejected",
-];
+const FILTERS = ["All", "Pending", "Accepted", "Completed", "Rejected"];
 
 const STATUS_STYLES = {
   Pending: "bg-amber-50 text-amber-700 ring-amber-200",
   Accepted: "bg-blue-50 text-blue-700 ring-blue-200",
   Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   Rejected: "bg-rose-50 text-rose-700 ring-rose-200",
+  Cancelled: "bg-stone-100 text-stone-600 ring-stone-200",
+};
+
+const isObject = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+// PERMANENT FIX: Aggressively scrub dummy numbers and broken undefined strings
+const clean = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value !== "string" && typeof value !== "number") return "";
+  
+  const result = String(value).trim();
+  if (!result) return "";
+
+  const lower = result.toLowerCase();
+  
+  // 1. Destroy all variations of null/undefined bugs
+  if (/^(null|undefined|n\/a|na|undefined undefined|null null)$/.test(lower)) return "";
+  
+  // 2. Destroy admin dummy phone numbers so they NEVER appear in the UI
+  if (
+    result.includes("98765") || 
+    lower.includes("dummy") || 
+    result === "+91 98765 43210" || 
+    result === "9876543210"
+  ) {
+    return "";
+  }
+
+  return result;
+};
+
+const firstValue = (...values) => {
+  for (const value of values) {
+    const result = clean(value);
+    if (result) return result;
+  }
+  return "";
 };
 
 const formatCurrency = (amount) =>
@@ -78,9 +92,8 @@ const formatCurrency = (amount) =>
     maximumFractionDigits: 0,
   }).format(Number(amount) || 0);
 
-const getInitials = (name = "Customer") =>
-  name
-    .trim()
+const getInitials = (name) =>
+  clean(name)
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -92,7 +105,6 @@ const formatDate = (date, time) => {
   if (!date) return "Date not available";
 
   const parsed = new Date(`${date}T${time || "00:00"}`);
-
   if (Number.isNaN(parsed.getTime())) {
     return `${date}${time ? ` · ${time}` : ""}`;
   }
@@ -106,142 +118,207 @@ const formatDate = (date, time) => {
   return `${formatted}${time ? ` · ${time}` : ""}`;
 };
 
+function formatAddress(value) {
+  if (!value) return "";
+
+  if (typeof value === "string") return clean(value);
+
+  if (Array.isArray(value)) {
+    return value.map(formatAddress).filter(Boolean).join(", ");
+  }
+
+  if (!isObject(value)) return "";
+
+  const direct = firstValue(
+    value.fullAddress,
+    value.address,
+    value.formattedAddress,
+    value.location
+  );
+
+  if (direct) return direct;
+
+  return [
+    value.houseNo,
+    value.flatNumber,
+    value.building,
+    value.apartment,
+    value.street,
+    value.area,
+    value.landmark,
+    value.city,
+    value.district,
+    value.state,
+    value.postalCode,
+    value.pincode,
+  ]
+    .map(clean)
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getUserAddress(user, appointment) {
+  const candidates = [
+    appointment.address,
+    appointment.doorstepAddress,
+    appointment.serviceAddress,
+    appointment.customerAddress,
+    appointment.userAddress,
+    appointment.location,
+    user.address,
+    user.defaultAddress,
+    user.location,
+  ];
+
+  for (const candidate of candidates) {
+    const value = formatAddress(candidate);
+    if (value) return value;
+  }
+
+  const addresses = user.addresses;
+
+  if (Array.isArray(addresses)) {
+    const selected =
+      addresses.find((item) => item?.isDefault || item?.default) ||
+      addresses[0];
+
+    return formatAddress(selected);
+  }
+
+  if (isObject(addresses)) {
+    return formatAddress(
+      addresses.defaultAddress ||
+      addresses.selectedAddress ||
+      addresses
+    );
+  }
+
+  return "";
+}
+
 function getCustomerDetails(item) {
-  const u = typeof item.user === "object" && item.user !== null ? item.user : {};
-  const c = typeof item.customer === "object" && item.customer !== null ? item.customer : {};
-  const cDetails = typeof item.customerDetails === "object" && item.customerDetails !== null ? item.customerDetails : {};
+  const user = isObject(item.user) ? item.user : {};
+  const customer = isObject(item.customer) ? item.customer : {};
+  const details = isObject(item.customerDetails)
+    ? item.customerDetails
+    : {};
 
-  // Aggressive Name Resolution
-  let rawName = 
-    item.customerName || 
-    item.userName || 
-    item.name || 
-    cDetails.name || 
-    c.name || 
-    u.name || 
-    `${item.firstName || cDetails.firstName || ''} ${item.lastName || cDetails.lastName || ''}`.trim();
+  const fullName = firstValue(
+    item.customerName,
+    item.userName,
+    item.name,
+    details.name,
+    customer.name,
+    user.name,
+    [
+      item.firstName || details.firstName || user.firstName || "",
+      item.lastName || details.lastName || user.lastName || "",
+    ].filter(Boolean).join(" "),
+    [
+      customer.firstName || "",
+      customer.lastName || "",
+    ].filter(Boolean).join(" ")
+  ) || "Valued Client"; // Added fallback so it is never blank
 
-  let finalName = typeof rawName === 'string' ? rawName.replace(/undefined/g, '').trim() : '';
-  if (!finalName || finalName === '') {
-    finalName = "Valued Client";
-  }
+  const mobile = firstValue(
+    item.mobileNumber,
+    item.phone,
+    item.phoneNumber,
+    details.mobileNumber,
+    details.phone,
+    customer.mobileNumber,
+    customer.phone,
+    user.phone,
+    user.mobileNumber
+  );
 
-  // Aggressive Mobile Resolution
-  let rawMobile = 
-    item.mobileNumber || 
-    item.phone || 
-    item.phoneNumber || 
-    cDetails.mobileNumber || 
-    cDetails.phone || 
-    c.mobileNumber || 
-    c.phone || 
-    u.phone || 
-    u.mobileNumber || 
-    "";
-
-  let finalMobile = typeof rawMobile === 'string' ? rawMobile.replace(/undefined/g, '').trim() : '';
-
-  // Actively filter out old cached dummy numbers so they don't break the UI
-  if (finalMobile.includes('98765') || finalMobile.includes('dummy') || finalMobile === '+91 98765 43210') {
-    finalMobile = ""; 
-  }
+  const address = getUserAddress(user, item);
 
   return {
-    name: finalName,
-    avatar: item.avatar || u.avatar || c.avatar || "",
-    mobile: finalMobile
+    name: fullName,
+    mobile,
+    address,
+    avatar: firstValue(item.avatar, user.avatar, customer.avatar),
   };
 }
 
-function parseAddress(item) {
-  const rawAddr =
-    item.address ||
-    item.doorstepAddress ||
-    item.userDoorstepAddress ||
-    item.serviceAddress ||
-    item.clientAddress ||
-    item.bookingAddress ||
-    item.shippingAddress ||
-    item.deliveryAddress ||
-    item.customerAddress ||
-    item.userAddress ||
-    (typeof item.location === "string" ? item.location : null) ||
-    item.location?.fullAddress ||
-    item.location?.address ||
-    item.location?.street ||
-    item.user?.address ||
-    item.user?.location ||
-    item.customer?.address ||
-    item.customerDetails?.address;
-
-  if (rawAddr) {
-    if (typeof rawAddr === "string") {
-      return rawAddr;
-    }
-    if (typeof rawAddr === "object" && rawAddr !== null) {
-      return (
-        rawAddr.fullAddress ||
-        rawAddr.address ||
-        rawAddr.street ||
-        rawAddr.location ||
-        rawAddr.city ||
-        [rawAddr.houseNo, rawAddr.street, rawAddr.city].filter(Boolean).join(", ") ||
-        JSON.stringify(rawAddr)
-      );
-    }
-    return String(rawAddr);
-  }
-
-  return "Doorstep Service Address";
-}
-
-function parseCoordinates(item) {
+function getCoordinates(item) {
+  const location = isObject(item.location) ? item.location : {};
   const coords =
     item.locationCoordinates ||
     item.coordinates ||
-    (typeof item.location === "object" && item.location?.latitude && item.location?.longitude ? item.location : null) ||
-    null;
+    location.coordinates ||
+    location;
 
-  if (coords && typeof coords.latitude === "number" && typeof coords.longitude === "number") {
-    return coords;
+  const latitude = Number(
+    coords?.latitude ?? coords?.lat
+  );
+  const longitude = Number(
+    coords?.longitude ?? coords?.lng ?? coords?.long
+  );
+
+  if (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  ) {
+    return { latitude, longitude };
   }
+
   return null;
 }
 
-function normalizeAppointment(item) {
+function normalizeAppointment(item = {}) {
   const customer = getCustomerDetails(item);
   const rawId = item._id || item.appointmentId || item.id || "";
-  const stringId = String(rawId);
+  const idString = String(rawId);
 
-  const isHomeService = item.type === "HOME" || item.isHomeService || true;
-  const address = parseAddress(item);
-  const coordinates = parseCoordinates(item);
+  const type = String(
+    item.type || item.serviceType || ""
+  ).toUpperCase();
+
+  const isHomeService =
+    type === "HOME" ||
+    item.isHomeService === true;
+
+  const status = firstValue(item.status, "Pending");
 
   return {
     _id: rawId,
-    id:
-      item.passCode ||
-      item.bookingCode ||
-      (stringId.length >= 6 ? stringId.slice(-6).toUpperCase() : stringId.toUpperCase()) ||
-      "Booking",
-    passCode: item.passCode || item.requestId || "",
+    id: firstValue(
+      item.passCode,
+      item.bookingCode,
+      idString.length >= 6
+        ? idString.slice(-6).toUpperCase()
+        : idString.toUpperCase()
+    ),
+    passCode: firstValue(item.passCode, item.requestId),
     customer: customer.name,
-    avatar: customer.avatar,
     mobile: customer.mobile,
-    service:
-      item.serviceName ||
-      item.service?.name ||
-      item.service?.serviceName ||
-      "Beauty Service",
+    address: customer.address,
+    avatar: customer.avatar,
+    service: firstValue(
+      item.serviceName,
+      item.service?.name,
+      item.service?.serviceName,
+      item.service?.title,
+      "Service name unavailable"
+    ),
     type: isHomeService ? "HOME" : "SALON",
-    address,
-    coordinates,
+    coordinates: getCoordinates(item),
     date: item.date || "",
     time: item.time || "",
     datetime: formatDate(item.date, item.time),
-    amount: Number(item.amount ?? item.price ?? 0),
-    status: item.status || "Pending",
-    assignedStaff: item.assignedStaff || item.staff || "",
+    amount: Number(item.amount ?? item.price ?? item.service?.price ?? 0),
+    status,
+    assignedStaff: firstValue(
+      item.assignedStaff,
+      item.staff?.name,
+      typeof item.staff === "string" ? item.staff : ""
+    ),
     createdAt: item.createdAt || null,
   };
 }
@@ -251,10 +328,7 @@ const pageVariants = {
   visible: {
     opacity: 1,
     y: 0,
-    transition: {
-      duration: 0.3,
-      staggerChildren: 0.04,
-    },
+    transition: { duration: 0.3, staggerChildren: 0.04 },
   },
 };
 
@@ -286,7 +360,7 @@ function CustomerAvatar({ appointment }) {
     return (
       <img
         src={appointment.avatar}
-        alt={appointment.customer}
+        alt={appointment.customer || "Customer"}
         className="h-10 w-10 shrink-0 rounded-full border border-[#EEE7E2] bg-[#F8F1EC] object-cover"
         onError={(event) => {
           event.currentTarget.style.display = "none";
@@ -314,7 +388,9 @@ function StatCard({ icon: Icon, label, value, description, iconStyle }) {
           <p className="mt-3 text-2xl font-semibold tracking-tight text-[#302722] sm:text-[28px]">
             {value}
           </p>
-          <p className="mt-1.5 text-[11px] leading-4 text-[#A09288]">{description}</p>
+          <p className="mt-1.5 text-[11px] leading-4 text-[#A09288]">
+            {description}
+          </p>
         </div>
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconStyle}`}>
           <Icon size={19} strokeWidth={1.8} />
@@ -324,100 +400,69 @@ function StatCard({ icon: Icon, label, value, description, iconStyle }) {
   );
 }
 
-function Pagination({ currentPage, totalPages, totalItems, pageSize, onPageChange }) {
+function Pagination({
+  currentPage,
+  totalPages,
+  totalItems,
+  pageSize,
+  onPageChange,
+}) {
   if (totalItems === 0) return null;
 
   const start = (currentPage - 1) * pageSize + 1;
   const end = Math.min(currentPage * pageSize, totalItems);
 
-  const visiblePages = [];
-  let firstPage = Math.max(1, currentPage - 2);
-  let lastPage = Math.min(totalPages, firstPage + 4);
-  firstPage = Math.max(1, lastPage - 4);
+  const pages = [];
+  const first = Math.max(1, currentPage - 2);
+  const last = Math.min(totalPages, first + 4);
+  const adjustedFirst = Math.max(1, last - 4);
 
-  for (let page = firstPage; page <= lastPage; page += 1) {
-    visiblePages.push(page);
+  for (let page = adjustedFirst; page <= last; page += 1) {
+    pages.push(page);
   }
 
-  const buttonBase =
+  const base =
     "flex h-9 min-w-9 items-center justify-center rounded-lg border text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-35";
 
   return (
     <div className="flex flex-col gap-3 border-t border-[#F0EAE5] bg-[#FCFBFA] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <p className="text-[11px] text-[#8D7F75]">
-        Showing{" "}
-        <span className="font-semibold text-[#51443B]">
-          {start}–{end}
-        </span>{" "}
-        of{" "}
-        <span className="font-semibold text-[#51443B]">
-          {totalItems}
-        </span>{" "}
-        appointments
+        Showing <b className="text-[#51443B]">{start}–{end}</b> of{" "}
+        <b className="text-[#51443B]">{totalItems}</b> appointments
       </p>
 
-      <nav aria-label="Appointments pagination" className="flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          disabled={currentPage === 1}
-          onClick={() => onPageChange(1)}
-          aria-label="First page"
-          className={`${buttonBase} border-[#EEE7E2] bg-white px-2 text-[#796B62] hover:bg-[#F7F1EC]`}
-        >
-          <ChevronFirst size={15} />
-        </button>
-
+      <nav className="flex flex-wrap items-center gap-1.5" aria-label="Pagination">
         <button
           type="button"
           disabled={currentPage === 1}
           onClick={() => onPageChange(currentPage - 1)}
-          aria-label="Previous page"
-          className={`${buttonBase} gap-1 border-[#EEE7E2] bg-white px-2.5 text-[#796B62] hover:bg-[#F7F1EC]`}
+          className={`${base} border-[#EEE7E2] bg-white px-2 text-[#796B62]`}
         >
-          <ChevronLeft size={14} />
-          <span className="hidden sm:inline">Previous</span>
+          <ChevronLeft size={15} />
         </button>
 
-        {firstPage > 1 && <span className="px-1 text-xs text-[#A09288]">…</span>}
-
-        {visiblePages.map((page) => (
+        {pages.map((page) => (
           <button
             type="button"
             key={page}
-            aria-label={`Page ${page}`}
-            aria-current={page === currentPage ? "page" : undefined}
             onClick={() => onPageChange(page)}
-            className={`${buttonBase} ${
-              page === currentPage
-                ? "border-[#302722] bg-[#302722] text-white shadow-sm"
-                : "border-[#EEE7E2] bg-white text-[#796B62] hover:bg-[#F7F1EC]"
+            className={`${base} ${
+              currentPage === page
+                ? "border-[#302722] bg-[#302722] text-white"
+                : "border-[#EEE7E2] bg-white text-[#796B62]"
             }`}
           >
             {page}
           </button>
         ))}
 
-        {lastPage < totalPages && <span className="px-1 text-xs text-[#A09288]">…</span>}
-
         <button
           type="button"
           disabled={currentPage === totalPages}
           onClick={() => onPageChange(currentPage + 1)}
-          aria-label="Next page"
-          className={`${buttonBase} gap-1 border-[#EEE7E2] bg-white px-2.5 text-[#796B62] hover:bg-[#F7F1EC]`}
+          className={`${base} border-[#EEE7E2] bg-white px-2 text-[#796B62]`}
         >
-          <span className="hidden sm:inline">Next</span>
-          <ChevronRight size={14} />
-        </button>
-
-        <button
-          type="button"
-          disabled={currentPage === totalPages}
-          onClick={() => onPageChange(totalPages)}
-          aria-label="Last page"
-          className={`${buttonBase} border-[#EEE7E2] bg-white px-2 text-[#796B62] hover:bg-[#F7F1EC]`}
-        >
-          <ChevronLast size={15} />
+          <ChevronRight size={15} />
         </button>
       </nav>
     </div>
@@ -435,8 +480,7 @@ export default function Appointments() {
   const [currentPage, setCurrentPage] = useState(1);
   const [socketConnected, setSocketConnected] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState(null);
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [activeBooking, setActiveBooking] = useState(null);
+  const [scannerBooking, setScannerBooking] = useState(null);
   const [trackingBooking, setTrackingBooking] = useState(null);
   const [toast, setToast] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
@@ -446,61 +490,68 @@ export default function Appointments() {
   const showToast = useCallback((message, type = "success") => {
     clearTimeout(toastTimer.current);
     setToast({ message, type });
-    toastTimer.current = setTimeout(() => {
-      setToast(null);
-    }, 3500);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
 
   const fetchStaffMembers = useCallback(async () => {
     try {
-      const res = await API.get("/api/staff");
-      const list = res.data?.data || res.data || [];
-      if (Array.isArray(list) && list.length > 0) {
-        const formattedStaff = list.map((s) => `${s.firstName || ""} ${s.lastName || ""} (${s.role || "Expert"})`.trim());
-        setStaffList(formattedStaff);
-      } else {
-        setStaffList([
-          "Sameer Shaik (Senior Aesthetician)",
-          "Ananya Rao (Master Hair Stylist)",
-          "Pooja Hegde (Spa & Massage Expert)",
-        ]);
+      const response = await API.get("/api/staff");
+      const payload =
+        response.data?.data ??
+        response.data?.staff ??
+        response.data;
+
+      if (!Array.isArray(payload)) {
+        setStaffList([]);
+        return;
       }
-    } catch {
-      setStaffList([
-        "Sameer Shaik (Senior Aesthetician)",
-        "Ananya Rao (Master Hair Stylist)",
-        "Pooja Hegde (Spa & Massage Expert)",
-      ]);
+
+      const names = payload
+        .map((staff) => {
+          if (typeof staff === "string") return clean(staff);
+
+          const name = firstValue(
+            staff.name,
+            `${staff.firstName || ""} ${staff.lastName || ""}`.trim(),
+            staff.fullName
+          );
+
+          const role = clean(staff.role || staff.designation);
+          return name ? (role ? `${name} (${role})` : name) : "";
+        })
+        .filter(Boolean);
+
+      setStaffList([...new Set(names)]);
+    } catch (error) {
+      console.error("Staff API error:", error);
+      setStaffList([]);
     }
   }, []);
 
   const fetchAppointments = useCallback(
     async (quiet = false) => {
       try {
-        if (quiet) {
-          setRefreshing(true);
-        } else {
-          setLoading(true);
-        }
+        if (quiet) setRefreshing(true);
+        else setLoading(true);
 
         const response = await API.get("/api/appointments");
-        const raw =
-          response.data?.data ||
-          response.data?.appointments ||
-          response.data ||
-          [];
+        const payload =
+          response.data?.data ??
+          response.data?.appointments ??
+          response.data;
 
-        if (!Array.isArray(raw)) {
-          throw new Error("The appointments API did not return an array.");
+        if (!Array.isArray(payload)) {
+          throw new Error("Appointments API did not return an array.");
         }
 
-        setAppointments(raw.map(normalizeAppointment));
+        setAppointments(payload.map(normalizeAppointment));
       } catch (error) {
         console.error("Failed to fetch appointments:", error);
         showToast(
           error.response?.status === 401
             ? "Authentication required. Please sign in again."
-            : "Unable to load appointments. Check your API connection.",
+            : error.response?.data?.message ||
+              "Unable to load appointments. Check your API connection.",
           "error"
         );
       } finally {
@@ -525,31 +576,33 @@ export default function Appointments() {
 
     socket.on("newAppointment", (booking) => {
       const formatted = normalizeAppointment(booking);
+
       setAppointments((current) => {
-        if (formatted._id && current.some((item) => item._id === formatted._id)) {
+        if (
+          formatted._id &&
+          current.some((item) => String(item._id) === String(formatted._id))
+        ) {
           return current;
         }
         return [formatted, ...current];
       });
+
       showToast(`New booking received: ${formatted.id}`);
     });
 
     socket.on("appointmentUpdated", (updated) => {
       setAppointments((current) =>
         current.map((item) => {
-          const sameId = item._id && updated._id && String(item._id) === String(updated._id);
-          const samePass = item.passCode && updated.passCode && item.passCode === updated.passCode;
+          const sameId =
+            item._id &&
+            updated._id &&
+            String(item._id) === String(updated._id);
 
-          if (!sameId && !samePass) return item;
-
-          const merged = { ...item, ...updated };
-          const normalized = normalizeAppointment(merged);
+          if (!sameId) return item;
 
           return {
             ...item,
-            ...normalized,
-            status: updated.status || item.status,
-            assignedStaff: updated.assignedStaff ?? item.assignedStaff,
+            ...normalizeAppointment({ ...item, ...updated }),
           };
         })
       );
@@ -562,14 +615,16 @@ export default function Appointments() {
   }, [fetchAppointments, fetchStaffMembers, showToast]);
 
   const stats = useMemo(() => {
-    const now = new Date();
+    const today = new Date();
     const todayString = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, "0"),
-      String(now.getDate()).padStart(2, "0"),
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, "0"),
+      String(today.getDate()).padStart(2, "0"),
     ].join("-");
 
-    const todayAppointments = appointments.filter((item) => item.date === todayString);
+    const todayAppointments = appointments.filter(
+      (item) => item.date === todayString
+    );
 
     return {
       total: appointments.length,
@@ -586,7 +641,8 @@ export default function Appointments() {
 
     const result = appointments.filter((item) => {
       const matchesFilter = filter === "All" || item.status === filter;
-      const searchableText = [
+
+      const searchable = [
         item.customer,
         item.mobile,
         item.id,
@@ -599,12 +655,17 @@ export default function Appointments() {
         .join(" ")
         .toLowerCase();
 
-      return matchesFilter && searchableText.includes(query);
+      return matchesFilter && searchable.includes(query);
     });
 
     return result.sort((a, b) => {
-      const dateA = new Date(a.createdAt || `${a.date}T${a.time || "00:00"}`).getTime();
-      const dateB = new Date(b.createdAt || `${b.date}T${b.time || "00:00"}`).getTime();
+      const dateA = new Date(
+        a.createdAt || `${a.date}T${a.time || "00:00"}`
+      ).getTime();
+      const dateB = new Date(
+        b.createdAt || `${b.date}T${b.time || "00:00"}`
+      ).getTime();
+
       return sortNewest ? dateB - dateA : dateA - dateB;
     });
   }, [appointments, filter, searchQuery, sortNewest]);
@@ -613,17 +674,18 @@ export default function Appointments() {
     setCurrentPage(1);
   }, [filter, searchQuery, sortNewest]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / PAGE_SIZE));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredAppointments.length / PAGE_SIZE)
+  );
 
   useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
+    if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
   const paginatedAppointments = useMemo(() => {
-    const startIndex = (currentPage - 1) * PAGE_SIZE;
-    return filteredAppointments.slice(startIndex, startIndex + PAGE_SIZE);
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredAppointments.slice(start, start + PAGE_SIZE);
   }, [filteredAppointments, currentPage]);
 
   const updateStatus = async (booking, status) => {
@@ -638,117 +700,141 @@ export default function Appointments() {
       await API.patch(`/api/appointments/${booking._id}/status`, { status });
 
       setAppointments((current) =>
-        current.map((item) => (item._id === booking._id ? { ...item, status } : item))
+        current.map((item) =>
+          String(item._id) === String(booking._id)
+            ? { ...item, status }
+            : item
+        )
       );
 
       showToast(
         status === "Accepted"
-          ? "Booking accepted. You can now assign an expert."
+          ? "Booking accepted successfully."
           : status === "Rejected"
             ? "Booking rejected successfully."
-            : "Service marked as completed."
+            : "Booking updated successfully."
       );
     } catch (error) {
       console.error("Status update failed:", error);
-      showToast(error.response?.data?.message || "Could not update booking status.", "error");
+      showToast(
+        error.response?.data?.message || "Could not update booking status.",
+        "error"
+      );
     } finally {
       setActionLoading(null);
     }
   };
 
   const assignStaff = async (booking, staffName) => {
-    if (!booking._id) {
-      showToast("Booking database ID is missing.", "error");
+    if (!booking._id || !staffName) {
+      showToast("Select a valid staff member.", "error");
       return;
     }
 
     setActionLoading(booking._id);
 
     try {
-      await API.patch(`/api/appointments/${booking._id}/assign-staff`, { assignedStaff: staffName });
+      await API.patch(
+        `/api/appointments/${booking._id}/assign-staff`,
+        { assignedStaff: staffName }
+      );
 
       setAppointments((current) =>
-        current.map((item) => (item._id === booking._id ? { ...item, assignedStaff: staffName } : item))
+        current.map((item) =>
+          String(item._id) === String(booking._id)
+            ? { ...item, assignedStaff: staffName }
+            : item
+        )
       );
 
       setOpenDropdownId(null);
-      showToast("Expert assigned successfully. Live map route & QR scan pass are now unlocked.");
+      showToast("Staff member assigned successfully.");
     } catch (error) {
       console.error("Staff assignment failed:", error);
-      showToast(error.response?.data?.message || "Unable to assign staff.", "error");
+      showToast(
+        error.response?.data?.message || "Unable to assign staff.",
+        "error"
+      );
     } finally {
       setActionLoading(null);
     }
   };
 
-  const openScanner = (booking) => {
-    setActiveBooking(booking);
-    setScannerOpen(true);
-  };
-
-  const handleVerifiedScan = async (decodedText) => {
-    if (!activeBooking) return;
-
-    let scannedValue = decodedText.trim();
+  const copyAddress = async (address) => {
+    if (!address) {
+      showToast("No customer address is available.", "error");
+      return;
+    }
 
     try {
-      const parsed = JSON.parse(decodedText);
-      if (parsed && typeof parsed === "object") {
+      await navigator.clipboard.writeText(address);
+      showToast("Address copied successfully.");
+    } catch {
+      showToast("Unable to copy address.", "error");
+    }
+  };
+
+  const verifyQr = async (booking, scannedText) => {
+    let scannedValue = scannedText.trim();
+
+    try {
+      const parsed = JSON.parse(scannedText);
+      if (isObject(parsed)) {
         scannedValue =
           parsed.passCode ||
           parsed.ticketId ||
           parsed.bookingId ||
           parsed.id ||
           parsed.code ||
-          decodedText.trim();
+          scannedText.trim();
       }
     } catch {
-      // Plain text QR codes are supported.
+      // Plain text QR codes are also supported.
     }
 
-    const matches = [
-      activeBooking.passCode,
-      activeBooking.id,
-      activeBooking._id,
-    ].some((identifier) => identifier && String(identifier).toLowerCase() === String(scannedValue).toLowerCase());
+    const valid = [
+      booking.passCode,
+      booking.id,
+      booking._id,
+    ].some(
+      (value) =>
+        value &&
+        String(value).toLowerCase() ===
+          String(scannedValue).toLowerCase()
+    );
 
-    if (!matches) {
+    if (!valid) {
       showToast("QR code does not match this booking.", "error");
-      return;
+      return false;
     }
 
-    if (activeBooking.status !== "Accepted") {
+    if (booking.status !== "Accepted") {
       showToast("Only accepted bookings can be verified.", "error");
-      return;
+      return false;
     }
-
-    if (!activeBooking._id) {
-      showToast("Booking database ID is missing.", "error");
-      return;
-    }
-
-    setActionLoading(activeBooking._id);
 
     try {
-      await API.patch(`/api/appointments/${activeBooking._id}/status`, { status: "Completed" });
+      await API.patch(`/api/appointments/${booking._id}/status`, {
+        status: "Completed",
+      });
 
       setAppointments((current) =>
-        current.map((item) => (item._id === activeBooking._id ? { ...item, status: "Completed" } : item))
+        current.map((item) =>
+          String(item._id) === String(booking._id)
+            ? { ...item, status: "Completed" }
+            : item
+        )
       );
 
-      setScannerOpen(false);
-      showToast("QR verified successfully. Service marked as completed.");
+      showToast("QR verified. Appointment marked completed.");
+      return true;
     } catch (error) {
-      console.error("QR verification update failed:", error);
-      showToast(error.response?.data?.message || "QR matched, but the server could not complete the booking.", "error");
-    } finally {
-      setActionLoading(null);
+      showToast(
+        error.response?.data?.message || "Unable to complete booking.",
+        "error"
+      );
+      return false;
     }
-  };
-
-  const copyAddressToClipboard = (addr) => {
-    navigator.clipboard.writeText(addr);
-    showToast("Doorstep address copied to clipboard!");
   };
 
   return (
@@ -759,7 +845,10 @@ export default function Appointments() {
         animate="visible"
         className="mx-auto max-w-[1600px] space-y-6 px-4 pb-10 pt-5 sm:px-6 sm:pt-7 lg:px-8"
       >
-        <motion.header variants={itemVariants} className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+        <motion.header
+          variants={itemVariants}
+          className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center"
+        >
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[#EDE1D9] bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[1.6px] text-[#A7684D]">
               <Sparkles size={13} />
@@ -771,27 +860,27 @@ export default function Appointments() {
             </h1>
 
             <p className="mt-1.5 max-w-xl text-xs leading-5 text-[#8D7F75] sm:text-sm">
-              Manage live bookings, coordinate doorstep experts, and verify customer passes in real time.
+              Manage bookings, coordinate service experts, and verify customer passes.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#EDE7E2] bg-white px-3 text-xs text-[#6F6259]">
-              <span className="relative flex h-2.5 w-2.5">
-                {socketConnected && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
-                <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${socketConnected ? "bg-emerald-500" : "bg-amber-400"}`} />
-              </span>
+              <span className={`h-2.5 w-2.5 rounded-full ${socketConnected ? "bg-emerald-500" : "bg-amber-400"}`} />
               {socketConnected ? "Live connected" : "Connecting"}
             </div>
 
             <button
               type="button"
-              onClick={() => fetchAppointments(true)}
+              onClick={() => {
+                fetchAppointments(true);
+                fetchStaffMembers();
+              }}
               disabled={refreshing}
               className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#EDE7E2] bg-white px-3.5 text-xs font-medium text-[#6F6259] transition hover:border-[#D9B8A5] hover:text-[#B46546] disabled:opacity-50"
             >
               <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
-              <span className="hidden sm:inline">Refresh</span>
+              Refresh
             </button>
           </div>
         </motion.header>
@@ -834,14 +923,16 @@ export default function Appointments() {
           <div className="space-y-4 border-b border-[#F0EAE5] p-4 sm:p-5">
             <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
               <div>
-                <h2 className="text-base font-semibold text-[#302722]">Booking management</h2>
+                <h2 className="text-base font-semibold text-[#302722]">
+                  Booking management
+                </h2>
                 <p className="mt-1 text-xs text-[#96877D]">
-                  {filteredAppointments.length} appointment{filteredAppointments.length !== 1 ? "s" : ""} found
+                  {filteredAppointments.length} appointment(s) found
                 </p>
               </div>
 
               <div className="flex flex-col gap-2 sm:flex-row">
-                <label className="flex h-10 min-w-0 items-center gap-2 rounded-xl border border-[#EDE7E2] bg-[#FCFBFA] px-3 sm:w-[280px]">
+                <label className="flex h-10 min-w-0 items-center gap-2 rounded-xl border border-[#EDE7E2] bg-[#FCFBFA] px-3 sm:w-[300px]">
                   <Search size={16} className="shrink-0 text-[#A09288]" />
                   <input
                     value={searchQuery}
@@ -854,7 +945,7 @@ export default function Appointments() {
                       type="button"
                       onClick={() => setSearchQuery("")}
                       aria-label="Clear search"
-                      className="text-[#A09288] hover:text-[#302722]"
+                      className="text-[#A09288]"
                     >
                       <X size={14} />
                     </button>
@@ -874,6 +965,7 @@ export default function Appointments() {
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
               <Filter size={15} className="mr-1 shrink-0 text-[#A09288]" />
+
               {FILTERS.map((tab) => {
                 const count =
                   tab === "All"
@@ -892,11 +984,11 @@ export default function Appointments() {
                     }`}
                   >
                     {tab}
-                    <span
-                      className={`rounded-md px-1.5 py-0.5 text-[10px] ${
-                        filter === tab ? "bg-white/15 text-white" : "bg-[#F4F0EC] text-[#8D7F75]"
-                      }`}
-                    >
+                    <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                      filter === tab
+                        ? "bg-white/15 text-white"
+                        : "bg-[#F4F0EC] text-[#8D7F75]"
+                    }`}>
                       {count}
                     </span>
                   </button>
@@ -905,48 +997,44 @@ export default function Appointments() {
             </div>
           </div>
 
-          {/* Desktop Table View */}
-          <div className="hidden overflow-x-auto overflow-y-visible md:block pb-32">
+          {/* Desktop table */}
+          <div className="hidden overflow-x-auto overflow-y-visible pb-20 md:block">
             <table className="w-full min-w-[1100px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-[#F0EAE5] bg-[#FCFBFA] text-[10px] font-semibold uppercase tracking-[1.1px] text-[#9B8D83]">
-                  <th className="px-5 py-4 w-[14%]">Booking</th>
-                  <th className="px-4 py-4 w-[18%]">Customer & Mobile</th>
-                  <th className="px-4 py-4 w-[24%]">Service & Doorstep Address</th>
-                  <th className="px-4 py-4 w-[12%]">Schedule</th>
-                  <th className="px-4 py-4 w-[10%]">Status</th>
-                  <th className="px-4 py-4 w-[14%]">Assigned expert</th>
-                  <th className="px-5 py-4 w-[8%] text-right">Actions</th>
+                  <th className="px-5 py-4">Booking</th>
+                  <th className="px-4 py-4">Customer & Mobile</th>
+                  <th className="px-4 py-4">Service & Address</th>
+                  <th className="px-4 py-4">Schedule</th>
+                  <th className="px-4 py-4">Status</th>
+                  <th className="px-4 py-4">Assigned expert</th>
+                  <th className="px-5 py-4 text-right">Actions</th>
                 </tr>
               </thead>
 
               <tbody className="divide-y divide-[#F2EDE9]">
                 {loading && appointments.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-20">
-                      <div className="flex flex-col items-center justify-center gap-3 text-center">
-                        <RefreshCw size={24} className="animate-spin text-[#C56E4E]" />
-                        <p className="text-sm text-[#8D7F75]">Loading appointments...</p>
-                      </div>
+                    <td colSpan={7} className="px-5 py-20 text-center text-sm text-[#8D7F75]">
+                      <RefreshCw size={22} className="mx-auto mb-3 animate-spin text-[#C56E4E]" />
+                      Loading appointments...
                     </td>
                   </tr>
                 ) : paginatedAppointments.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-20">
-                      <div className="flex flex-col items-center justify-center text-center">
-                        <CalendarDays size={25} className="text-[#B66B4B]" />
-                        <p className="mt-4 text-sm font-semibold text-[#302722]">No appointments found</p>
-                        <p className="mt-1 max-w-sm text-xs leading-5 text-[#9B8D83]">Try another filter or search term.</p>
-                      </div>
+                    <td colSpan={7} className="px-5 py-20 text-center">
+                      <CalendarDays size={25} className="mx-auto text-[#B66B4B]" />
+                      <p className="mt-4 text-sm font-semibold text-[#302722]">No appointments found</p>
+                      <p className="mt-1 text-xs text-[#9B8D83]">Try another filter or search term.</p>
                     </td>
                   </tr>
                 ) : (
                   <AnimatePresence mode="popLayout">
                     {paginatedAppointments.map((booking) => {
-                      const isPending = booking.status === "Pending";
-                      const isAccepted = booking.status === "Accepted";
-                      const isCompleted = booking.status === "Completed";
-                      const isRejected = booking.status === "Rejected";
+                      const pending = booking.status === "Pending";
+                      const accepted = booking.status === "Accepted";
+                      const completed = booking.status === "Completed";
+                      const rejected = booking.status === "Rejected";
 
                       return (
                         <motion.tr
@@ -955,112 +1043,127 @@ export default function Appointments() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0 }}
                           key={booking._id || booking.id}
-                          className={`group transition-colors hover:bg-[#FCFAF8] relative ${openDropdownId === booking._id ? "z-50" : "z-0"}`}
+                          className="group transition-colors hover:bg-[#FCFAF8]"
                         >
-                          <td className="px-5 py-4 align-middle">
-                            <p className="font-mono text-xs font-semibold text-[#302722]">{booking.id}</p>
-                            <p className="mt-1 text-[10px] text-[#A09288]">Doorstep Service</p>
+                          <td className="px-5 py-4">
+                            <p className="font-mono text-xs font-semibold text-[#302722]">
+                              {booking.id || "Booking"}
+                            </p>
+                            <p className="mt-1 text-[10px] text-[#A09288]">
+                              {booking.type === "HOME" ? "Home service" : "Salon appointment"}
+                            </p>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-3">
                               <CustomerAvatar appointment={booking} />
                               <div className="min-w-0">
-                                <p className="max-w-[150px] truncate text-xs font-semibold text-[#302722]" title={booking.customer}>
-                                  {booking.customer}
+                                <p className="max-w-[160px] truncate text-xs font-semibold text-[#302722]">
+                                  {booking.customer || "Not provided"}
                                 </p>
+
                                 {booking.mobile ? (
-                                  <p className="mt-0.5 flex items-center gap-1 font-mono text-[11px] text-[#796B62]" title={booking.mobile}>
-                                    <Phone size={11} className="text-[#C56E4E] shrink-0" />
-                                    <span className="truncate">{booking.mobile}</span>
-                                  </p>
+                                  <a
+                                    href={`tel:${booking.mobile}`}
+                                    className="mt-1 flex items-center gap-1 font-mono text-[11px] text-[#796B62] hover:text-[#C56E4E]"
+                                  >
+                                    <Phone size={11} />
+                                    {booking.mobile}
+                                  </a>
                                 ) : (
-                                  <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
+                                  <p className="mt-1 text-[10px] text-[#A09288]">
+                                    No phone provided
+                                  </p>
                                 )}
-                                <p className="mt-0.5 text-[10px] text-[#A09288]">{formatCurrency(booking.amount)}</p>
+
+                                <p className="mt-1 text-[10px] text-[#A09288]">
+                                  {formatCurrency(booking.amount)}
+                                </p>
                               </div>
                             </div>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
-                            <p className="max-w-[220px] truncate text-xs font-semibold text-[#51443B]" title={booking.service}>
+                          <td className="px-4 py-4">
+                            <p className="max-w-[220px] truncate text-xs font-semibold text-[#51443B]">
                               {booking.service}
                             </p>
                             <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[#796B62]">
-                              <MapPin size={13} className="text-[#C56E4E] shrink-0 mt-0.5" />
-                              <span className="line-clamp-2 leading-relaxed font-medium" title={booking.address}>
-                                {booking.address}
+                              <MapPin size={13} className="mt-0.5 shrink-0 text-[#C56E4E]" />
+                              <span className="line-clamp-2 leading-relaxed">
+                                {booking.address || "Address not provided"}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => copyAddressToClipboard(booking.address)}
-                                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#C56E4E] hover:underline"
-                                title="Copy doorstep address"
+                                disabled={!booking.address}
+                                onClick={() => copyAddress(booking.address)}
+                                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#C56E4E] hover:underline disabled:opacity-40"
                               >
-                                <Copy size={11} /> Copy Address
+                                <Copy size={11} /> Copy address
                               </button>
                               {booking.coordinates && (
-                                <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                  <MapPinned size={10} /> GPS Verified
+                                <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                                  <MapPinned size={10} /> Coordinates saved
                                 </span>
                               )}
                             </div>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-2 text-xs text-[#62564D]">
                               <CalendarDays size={14} className="shrink-0 text-[#B66B4B]" />
                               <span className="whitespace-nowrap">{booking.datetime}</span>
                             </div>
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
+                          <td className="px-4 py-4">
                             <StatusBadge status={booking.status} />
                           </td>
 
-                          <td className="px-4 py-4 align-middle">
-                            {isPending ? (
-                              <span className="text-[11px] text-[#A09288]">-</span>
-                            ) : isCompleted ? (
+                          <td className="px-4 py-4">
+                            {pending || rejected ? (
+                              <span className="text-[11px] text-[#A09288]">—</span>
+                            ) : completed ? (
                               <span className="inline-flex max-w-[170px] items-center gap-1.5 text-xs text-emerald-700">
                                 <ShieldCheck size={14} />
                                 <span className="truncate">{booking.assignedStaff || "Unassigned"}</span>
                               </span>
-                            ) : isRejected ? (
-                              <span className="text-[11px] text-[#A09288]">-</span>
                             ) : (
-                              <div className="relative w-full max-w-[170px]">
+                              <div className="relative w-full max-w-[180px]">
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    setOpenDropdownId(openDropdownId === booking._id ? null : booking._id)
+                                    setOpenDropdownId(
+                                      openDropdownId === booking._id ? null : booking._id
+                                    )
                                   }
-                                  disabled={actionLoading === booking._id}
-                                  className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[#EEE4DC] bg-white px-3 text-left text-[11px] text-[#67574D] transition hover:border-[#D6B5A2]"
+                                  disabled={actionLoading === booking._id || staffList.length === 0}
+                                  className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[#EEE4DC] bg-white px-3 text-left text-[11px] text-[#67574D] hover:border-[#D6B5A2] disabled:opacity-50"
                                 >
-                                  <span className="truncate">{booking.assignedStaff || "Assign Expert"}</span>
+                                  <span className="truncate">
+                                    {booking.assignedStaff || "Assign expert"}
+                                  </span>
                                   <ChevronDown size={14} />
                                 </button>
 
                                 <AnimatePresence>
                                   {openDropdownId === booking._id && (
                                     <motion.div
-                                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
-                                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                                      exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                                      className="absolute left-0 top-full mt-2 w-[240px] rounded-xl border border-[#EEE7E2] bg-white p-2 shadow-xl z-50"
+                                      initial={{ opacity: 0, y: 6 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      exit={{ opacity: 0, y: 6 }}
+                                      className="absolute left-0 top-full z-50 mt-2 max-h-56 w-[240px] overflow-y-auto rounded-xl border border-[#EEE7E2] bg-white p-2 shadow-xl"
                                     >
                                       <p className="px-2 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
-                                        SELECT REAL EXPERT
+                                        Select staff member
                                       </p>
                                       {staffList.map((staff) => (
                                         <button
                                           type="button"
                                           key={staff}
                                           onClick={() => assignStaff(booking, staff)}
-                                          className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] transition hover:bg-[#FAF3EE] hover:text-[#AD6243]"
+                                          className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#FAF3EE]"
                                         >
                                           <span>{staff}</span>
                                           {booking.assignedStaff === staff && <Check size={14} />}
@@ -1071,76 +1174,66 @@ export default function Appointments() {
                                 </AnimatePresence>
                               </div>
                             )}
+
+                            {accepted && staffList.length === 0 && (
+                              <p className="mt-1 max-w-[170px] text-[10px] text-amber-700">
+                                No staff records available
+                              </p>
+                            )}
                           </td>
 
-                          <td className="px-5 py-4 text-right align-middle">
-                            {isPending && (
+                          <td className="px-5 py-4 text-right">
+                            {pending && (
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => updateStatus(booking, "Accepted")}
                                   disabled={actionLoading === booking._id}
-                                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-600 hover:text-white disabled:opacity-50"
+                                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-600 hover:text-white disabled:opacity-50"
                                 >
-                                  <Check size={13} />
-                                  Accept
+                                  <Check size={13} /> Accept
                                 </button>
-
                                 <button
                                   type="button"
                                   onClick={() => updateStatus(booking, "Rejected")}
                                   disabled={actionLoading === booking._id}
+                                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white disabled:opacity-50"
                                   title="Reject booking"
-                                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600 transition hover:bg-rose-600 hover:text-white disabled:opacity-50"
                                 >
                                   <X size={14} />
                                 </button>
                               </div>
                             )}
 
-                            {isAccepted && (
+                            {accepted && (
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => setTrackingBooking(booking)}
-                                  disabled={!booking.assignedStaff}
-                                  title={!booking.assignedStaff ? "Assign expert first" : "Track route"}
-                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition ${
-                                    booking.assignedStaff
-                                      ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
-                                      : "cursor-not-allowed bg-stone-100 text-stone-400"
-                                  }`}
+                                  disabled={!booking.assignedStaff || !booking.address}
+                                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-50 px-2.5 text-[11px] font-medium text-blue-700 hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  <Navigation size={13} />
-                                  Route
+                                  <Navigation size={13} /> Route
                                 </button>
-
                                 <button
                                   type="button"
-                                  onClick={() => openScanner(booking)}
+                                  onClick={() => setScannerBooking(booking)}
                                   disabled={!booking.assignedStaff}
-                                  title={!booking.assignedStaff ? "Assign an expert first to unlock scanner" : "Scan customer pass"}
-                                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition ${
-                                    booking.assignedStaff
-                                      ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
-                                      : "cursor-not-allowed bg-stone-200 text-stone-500"
-                                  }`}
+                                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-[#302722] px-2.5 text-[11px] font-medium text-white hover:bg-[#B66B4B] disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  <QrCode size={13} />
-                                  Scan
+                                  <QrCode size={13} /> Scan
                                 </button>
                               </div>
                             )}
 
-                            {isCompleted && (
-                              <div className="flex items-center justify-end gap-1 text-[11px] font-medium text-emerald-700">
-                                <CheckCircle2 size={13} />
-                                Done
-                              </div>
+                            {completed && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+                                <CheckCircle2 size={13} /> Done
+                              </span>
                             )}
 
-                            {isRejected && (
-                              <span className="text-[11px] text-rose-600 block w-full text-right">Rejected</span>
+                            {rejected && (
+                              <span className="text-[11px] text-rose-600">Rejected</span>
                             )}
                           </td>
                         </motion.tr>
@@ -1152,7 +1245,7 @@ export default function Appointments() {
             </table>
           </div>
 
-          {/* Mobile Card View */}
+          {/* Mobile cards */}
           <div className="space-y-3 p-3 md:hidden sm:p-4">
             {loading && appointments.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-12 text-sm text-[#8D7F75]">
@@ -1166,187 +1259,187 @@ export default function Appointments() {
                 <p className="mt-1 text-xs text-[#96877D]">Try changing your search or filter.</p>
               </div>
             ) : (
-              <AnimatePresence mode="popLayout">
-                {paginatedAppointments.map((booking) => {
-                  const isPending = booking.status === "Pending";
-                  const isAccepted = booking.status === "Accepted";
-                  const isCompleted = booking.status === "Completed";
-                  const isRejected = booking.status === "Rejected";
-
-                  return (
-                    <motion.article
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -6 }}
-                      key={booking._id || booking.id}
-                      className="rounded-xl border border-[#EEE7E2] bg-white p-4 space-y-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <CustomerAvatar appointment={booking} />
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
-                            {booking.mobile ? (
-                              <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
-                                <Phone size={12} className="text-[#C56E4E]" />
-                                <span>{booking.mobile}</span>
-                              </p>
-                            ) : (
-                              <p className="mt-0.5 text-[10px] text-[#A09288]">No phone provided</p>
-                            )}
-                            <p className="mt-0.5 truncate font-mono text-[10px] text-[#A09288]">{booking.id}</p>
-                          </div>
-                        </div>
-                        <StatusBadge status={booking.status} />
-                      </div>
-
-                      <div className="h-px bg-[#F1ECE7]" />
-
-                      <div className="space-y-2 text-xs">
-                        <div>
-                          <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Service</p>
-                          <p className="font-semibold text-[#51443B]">{booking.service}</p>
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Doorstep Address</p>
-                            <button
-                              type="button"
-                              onClick={() => copyAddressToClipboard(booking.address)}
-                              className="text-[10px] font-semibold text-[#C56E4E] hover:underline flex items-center gap-1"
-                            >
-                              <Copy size={10} /> Copy
-                            </button>
-                          </div>
-                          <div className="mt-1 flex items-start gap-1.5 text-xs text-[#796B62] bg-[#FCFBFA] p-2 rounded-lg border border-[#F0EAE5]">
-                            <MapPin size={14} className="text-[#C56E4E] shrink-0 mt-0.5" />
-                            <span className="leading-relaxed font-medium">{booking.address}</span>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 pt-1">
-                          <div>
-                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Amount</p>
-                            <p className="font-semibold text-[#302722]">{formatCurrency(booking.amount)}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Schedule</p>
-                            <p className="font-medium text-[#67574D]">{booking.datetime}</p>
-                          </div>
-                        </div>
-
-                        {booking.assignedStaff && (
-                          <div className="pt-1">
-                            <p className="text-[10px] text-[#A09288] uppercase tracking-wider">Assigned Expert</p>
-                            <p className="font-medium text-[#67574D]">{booking.assignedStaff}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap gap-2 border-t border-[#F1ECE7] pt-3">
-                        {isPending && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => updateStatus(booking, "Accepted")}
-                              disabled={actionLoading === booking._id}
-                              className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-50 px-3 text-xs font-medium text-emerald-700 transition hover:bg-emerald-600 hover:text-white disabled:opacity-50"
-                            >
-                              <Check size={14} />
-                              Accept
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => updateStatus(booking, "Rejected")}
-                              disabled={actionLoading === booking._id}
-                              className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-rose-50 px-3 text-xs font-medium text-rose-600 transition hover:bg-rose-600 hover:text-white disabled:opacity-50"
-                            >
-                              <X size={14} />
-                              Reject
-                            </button>
-                          </>
-                        )}
-
-                        {isAccepted && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenDropdownId(openDropdownId === booking._id ? null : booking._id)
-                              }
-                              className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-[#EEE7E2] px-3 text-xs text-[#67574D]"
-                            >
-                              <Users size={14} />
-                              {booking.assignedStaff ? "Change Staff" : "Assign Staff"}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setTrackingBooking(booking)}
-                              disabled={!booking.assignedStaff}
-                              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition ${
-                                booking.assignedStaff
-                                  ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white"
-                                  : "cursor-not-allowed bg-stone-100 text-stone-400"
-                              }`}
-                            >
-                              <Navigation size={14} />
-                              Route
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => openScanner(booking)}
-                              disabled={!booking.assignedStaff}
-                              className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition ${
-                                booking.assignedStaff
-                                  ? "bg-[#302722] text-white hover:bg-[#B66B4B]"
-                                  : "cursor-not-allowed bg-stone-200 text-stone-500"
-                              }`}
-                            >
-                              <QrCode size={15} />
-                              Scan
-                            </button>
-                          </>
-                        )}
-
-                        {isCompleted && (
-                          <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 py-1">
-                            <CheckCircle2 size={15} />
-                            Service completed
-                          </div>
-                        )}
-
-                        {isRejected && (
-                          <div className="text-xs text-rose-600 py-1">This appointment was rejected.</div>
-                        )}
-                      </div>
-
-                      {isAccepted && openDropdownId === booking._id && (
-                        <div className="mt-3 rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-2">
-                          <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
-                            SELECT REAL EXPERT
+              paginatedAppointments.map((booking) => (
+                <motion.article
+                  layout
+                  key={booking._id || booking.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-3 rounded-xl border border-[#EEE7E2] bg-white p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <CustomerAvatar appointment={booking} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-[#302722]">
+                          {booking.customer || "Not provided"}
+                        </p>
+                        {booking.mobile ? (
+                          <a
+                            href={`tel:${booking.mobile}`}
+                            className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]"
+                          >
+                            <Phone size={12} /> {booking.mobile}
+                          </a>
+                        ) : (
+                          <p className="mt-0.5 text-[10px] text-[#A09288]">
+                            No phone provided
                           </p>
-                          {staffList.map((staff) => (
+                        )}
+                        <p className="mt-0.5 font-mono text-[10px] text-[#A09288]">
+                          {booking.id}
+                        </p>
+                      </div>
+                    </div>
+                    <StatusBadge status={booking.status} />
+                  </div>
+
+                  <div className="h-px bg-[#F1ECE7]" />
+
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Service</p>
+                      <p className="font-semibold text-[#51443B]">{booking.service}</p>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">
+                          Customer address
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => copyAddress(booking.address)}
+                          disabled={!booking.address}
+                          className="flex items-center gap-1 text-[10px] font-semibold text-[#C56E4E] disabled:opacity-40"
+                        >
+                          <Copy size={10} /> Copy
+                        </button>
+                      </div>
+                      <div className="mt-1 flex items-start gap-1.5 rounded-lg border border-[#F0EAE5] bg-[#FCFBFA] p-2 text-xs text-[#796B62]">
+                        <MapPin size={14} className="mt-0.5 shrink-0 text-[#C56E4E]" />
+                        <span className="leading-relaxed">
+                          {booking.address || "Address not provided"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Amount</p>
+                        <p className="font-semibold text-[#302722]">
+                          {formatCurrency(booking.amount)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Schedule</p>
+                        <p className="font-medium text-[#67574D]">{booking.datetime}</p>
+                      </div>
+                    </div>
+
+                    {booking.assignedStaff && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Assigned expert</p>
+                        <p className="font-medium text-[#67574D]">{booking.assignedStaff}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 border-t border-[#F1ECE7] pt-3">
+                    {booking.status === "Pending" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => updateStatus(booking, "Accepted")}
+                          disabled={actionLoading === booking._id}
+                          className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-50 px-3 text-xs font-medium text-emerald-700 hover:bg-emerald-600 hover:text-white disabled:opacity-50"
+                        >
+                          <Check size={14} /> Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateStatus(booking, "Rejected")}
+                          disabled={actionLoading === booking._id}
+                          className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-rose-50 px-3 text-xs font-medium text-rose-600 hover:bg-rose-600 hover:text-white disabled:opacity-50"
+                        >
+                          <X size={14} /> Reject
+                        </button>
+                      </>
+                    )}
+
+                    {booking.status === "Accepted" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenDropdownId(
+                              openDropdownId === booking._id ? null : booking._id
+                            )
+                          }
+                          disabled={staffList.length === 0}
+                          className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-[#EEE7E2] px-3 text-xs text-[#67574D] disabled:opacity-40"
+                        >
+                          <Users size={14} /> Assign staff
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTrackingBooking(booking)}
+                          disabled={!booking.assignedStaff || !booking.address}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-50 px-3 text-xs font-medium text-blue-700 disabled:opacity-40"
+                        >
+                          <Navigation size={14} /> Route
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScannerBooking(booking)}
+                          disabled={!booking.assignedStaff}
+                          className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#302722] px-3 text-xs font-medium text-white disabled:opacity-40"
+                        >
+                          <QrCode size={15} /> Scan
+                        </button>
+                      </>
+                    )}
+
+                    {booking.status === "Completed" && (
+                      <span className="flex items-center gap-2 py-1 text-xs font-medium text-emerald-700">
+                        <CheckCircle2 size={15} /> Service completed
+                      </span>
+                    )}
+
+                    {booking.status === "Rejected" && (
+                      <span className="py-1 text-xs text-rose-600">
+                        This appointment was rejected.
+                      </span>
+                    )}
+                  </div>
+
+                  {booking.status === "Accepted" &&
+                    openDropdownId === booking._id && (
+                      <div className="rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-2">
+                        <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
+                          Select staff member
+                        </p>
+                        {staffList.length ? (
+                          staffList.map((staff) => (
                             <button
                               type="button"
                               key={staff}
                               onClick={() => assignStaff(booking, staff)}
-                              className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#F8EFE8]"
+                              className="flex w-full items-center justify-between rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#F8EFE8]"
                             >
-                              <span>{staff}</span>
+                              {staff}
                               {booking.assignedStaff === staff && <Check size={14} />}
                             </button>
-                          ))}
-                        </div>
-                      )}
-                    </motion.article>
-                  );
-                })}
-              </AnimatePresence>
+                          ))
+                        ) : (
+                          <p className="px-2 py-3 text-[11px] text-[#9B8D83]">
+                            No staff records found. Add staff in the staff management section.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                </motion.article>
+              ))
             )}
           </div>
 
@@ -1373,19 +1466,19 @@ export default function Appointments() {
       </motion.main>
 
       <AnimatePresence>
-        {scannerOpen && activeBooking && (
+        {scannerBooking && (
           <QRScannerModal
-            key={activeBooking._id || activeBooking.id}
-            booking={activeBooking}
-            onClose={() => setScannerOpen(false)}
-            onVerified={handleVerifiedScan}
+            key={scannerBooking._id}
+            booking={scannerBooking}
+            onClose={() => setScannerBooking(null)}
+            onVerified={verifyQr}
           />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {trackingBooking && (
-          <LiveRouteTrackingModal
+          <RouteModal
             booking={trackingBooking}
             onClose={() => setTrackingBooking(null)}
           />
@@ -1398,11 +1491,17 @@ export default function Appointments() {
             initial={{ opacity: 0, y: 18, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12 }}
-            className={`fixed bottom-5 left-1/2 z-[120] flex w-[calc(100%-32px)] max-w-md -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3.5 shadow-xl sm:bottom-7 ${
-              toast.type === "error" ? "border-rose-200 bg-white text-rose-700" : "border-emerald-200 bg-white text-[#355D43]"
+            className={`fixed bottom-5 left-1/2 z-[120] flex w-[calc(100%-32px)] max-w-md -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3.5 shadow-xl ${
+              toast.type === "error"
+                ? "border-rose-200 bg-white text-rose-700"
+                : "border-emerald-200 bg-white text-[#355D43]"
             }`}
           >
-            {toast.type === "error" ? <AlertCircle size={18} className="shrink-0" /> : <CheckCircle2 size={18} className="shrink-0" />}
+            {toast.type === "error" ? (
+              <AlertCircle size={18} className="shrink-0" />
+            ) : (
+              <CheckCircle2 size={18} className="shrink-0" />
+            )}
             <p className="text-xs font-medium leading-5">{toast.message}</p>
             <button
               type="button"
@@ -1419,149 +1518,109 @@ export default function Appointments() {
   );
 }
 
-function LiveRouteTrackingModal({ booking, onClose }) {
-  const doorstepAddress = booking.address || "Doorstep Service Address";
-  
-  const destinationQuery = booking.coordinates
+function RouteModal({ booking, onClose }) {
+  const destination = booking.coordinates
     ? `${booking.coordinates.latitude},${booking.coordinates.longitude}`
-    : encodeURIComponent(doorstepAddress);
+    : booking.address;
 
-  const googleMapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destinationQuery}`;
+  const mapsUrl = destination
+    ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`
+    : null;
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-[#241B17]/70 backdrop-blur-sm p-0 sm:p-4"
+      className="fixed inset-0 z-[110] flex items-end justify-center bg-[#241B17]/70 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
       <motion.div
-        initial={{ opacity: 0, y: 30, scale: 0.98 }}
+        initial={{ opacity: 0, y: 25, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 30, scale: 0.98 }}
-        transition={{ duration: 0.22 }}
-        className="w-full max-w-lg overflow-hidden rounded-t-[28px] border border-[#EEE7E2] bg-white shadow-2xl sm:rounded-[28px]"
+        exit={{ opacity: 0, y: 25, scale: 0.98 }}
+        className="w-full max-w-lg overflow-hidden rounded-t-[26px] border border-[#EEE7E2] bg-white shadow-2xl sm:rounded-[26px]"
       >
-        <div className="flex items-center justify-between border-b border-[#F0EAE5] px-5 py-4 sm:px-6 bg-[#FCFBFA]">
+        <div className="flex items-center justify-between border-b border-[#F0EAE5] bg-[#FCFBFA] px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-              <Navigation size={20} />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white">
+              <Navigation size={19} />
             </div>
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[1.5px] text-blue-600">
-                Live Route Navigation
+                Route navigation
               </p>
-              <h2 className="mt-0.5 text-base font-semibold text-[#302722]">
-                Dispatch to Doorstep Address
+              <h2 className="text-base font-semibold text-[#302722]">
+                Customer destination
               </h2>
             </div>
           </div>
-
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EEE7E2] text-[#8D7F75] transition hover:bg-white hover:text-[#302722]"
-            aria-label="Close tracking"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EEE7E2] text-[#8D7F75]"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="relative h-[240px] w-full bg-[#E8F0F2] overflow-hidden">
-          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" className="absolute inset-0 opacity-70">
-            <defs>
-              <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#CBD5E1" strokeWidth="1"/>
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#gridPattern)" />
-            <path d="M 60,150 Q 180,50 280,140 T 420,110" fill="none" stroke="#2563EB" strokeWidth="5" strokeDasharray="8 6" className="animate-pulse" />
-          </svg>
-
-          <motion.div
-            animate={{ x: [0, 90, 180, 240], y: [0, -15, 25, -5] }}
-            transition={{ repeat: Infinity, duration: 6, ease: "easeInOut" }}
-            className="absolute top-[80px] left-[50px] bg-[#302722] text-white p-2.5 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center"
-          >
-            <Car size={18} className="text-[#E5A024]" />
-          </motion.div>
-
-          <div className="absolute bottom-[40px] right-[60px] bg-red-600 text-white p-2.5 rounded-full shadow-lg border-2 border-white z-10">
-            <Home size={18} />
+        <div className="space-y-4 p-5 sm:p-6">
+          <div className="rounded-2xl border border-[#EEE7E2] bg-[#FCFBFA] p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">
+              Customer
+            </p>
+            <p className="mt-1 text-sm font-semibold text-[#302722]">
+              {booking.customer || "Not provided"}
+            </p>
+            {booking.mobile && (
+              <a
+                href={`tel:${booking.mobile}`}
+                className="mt-1 inline-flex items-center gap-1.5 text-xs text-[#796B62]"
+              >
+                <Phone size={13} /> {booking.mobile}
+              </a>
+            )}
+            <div className="mt-4 border-t border-[#EEE7E2] pt-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">
+                Saved address
+              </p>
+              <p className="mt-1 flex items-start gap-2 text-xs leading-5 text-[#51443B]">
+                <MapPin size={15} className="mt-0.5 shrink-0 text-[#C56E4E]" />
+                {booking.address || "Address not provided"}
+              </p>
+            </div>
+            {booking.coordinates && (
+              <p className="mt-2 text-[10px] text-emerald-700">
+                Coordinates: {booking.coordinates.latitude}, {booking.coordinates.longitude}
+              </p>
+            )}
           </div>
 
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full shadow-md border border-[#EEE7E2] text-center z-10 flex items-center gap-2">
-            <Compass size={15} className="text-blue-600 animate-spin" />
-            <span className="text-xs font-bold text-[#302722]">Expert dispatched to doorstep · <span className="text-blue-600">Live GPS Active</span></span>
-          </div>
+          {mapsUrl ? (
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-xs font-bold uppercase tracking-wider text-white shadow-md transition hover:bg-blue-700"
+            >
+              Open destination in Google Maps <ExternalLink size={15} />
+            </a>
+          ) : (
+            <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
+              A customer address or saved coordinates are required to open navigation.
+            </p>
+          )}
         </div>
 
-        <div className="p-5 sm:p-6 space-y-4">
-          <div className="rounded-2xl border border-[#EEE7E2] bg-[#FCFBFA] p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Customer Contact</span>
-              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Verified Client</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[#302722]">{booking.customer}</p>
-                {booking.mobile && (
-                  <p className="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-[#796B62]">
-                    <Phone size={13} className="text-[#C56E4E]" />
-                    <span>{booking.mobile}</span>
-                  </p>
-                )}
-              </div>
-              {booking.mobile && (
-                <a
-                  href={`tel:${booking.mobile}`}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#C56E4E] px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#A35539]"
-                >
-                  <Phone size={13} /> Call Client
-                </a>
-              )}
-            </div>
-
-            <div className="pt-3 border-t border-[#EEE7E2]/60">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#8D7F75]">Accurate Doorstep Address</p>
-                {booking.coordinates ? (
-                  <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                    Pinpoint Lat: {booking.coordinates.latitude.toFixed(4)}, Lon: {booking.coordinates.longitude.toFixed(4)}
-                  </span>
-                ) : (
-                  <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                    Address Navigation
-                  </span>
-                )}
-              </div>
-              <div className="flex items-start gap-2 text-xs text-[#51443B]">
-                <MapPin size={16} className="text-[#C56E4E] shrink-0 mt-0.5" />
-                <span className="font-semibold leading-relaxed">{doorstepAddress}</span>
-              </div>
-            </div>
-          </div>
-
-          <a
-            href={googleMapsDirectionsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider transition shadow-md flex items-center justify-center gap-2"
-          >
-            Open Accurate Navigation in Google Maps <ExternalLink size={15} />
-          </a>
-        </div>
-
-        <div className="flex gap-3 border-t border-[#F0EAE5] px-5 py-4 sm:px-6 bg-[#FCFBFA]">
+        <div className="border-t border-[#F0EAE5] bg-[#FCFBFA] p-4">
           <button
             type="button"
             onClick={onClose}
-            className="h-11 w-full rounded-xl border border-[#E9E1DA] text-xs font-medium text-[#67574D] transition hover:bg-white"
+            className="h-11 w-full rounded-xl border border-[#E9E1DA] text-xs font-medium text-[#67574D]"
           >
-            Close tracking
+            Close
           </button>
         </div>
       </motion.div>
@@ -1572,25 +1631,21 @@ function LiveRouteTrackingModal({ booking, onClose }) {
 function QRScannerModal({ booking, onClose, onVerified }) {
   const [cameraError, setCameraError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [cameraList, setCameraList] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState("");
-  const [scanMessage, setScanMessage] = useState("Position the booking QR code inside the frame.");
 
   const scannerRef = useRef(null);
-  const elementId = useRef(`beautyvibe-qr-${Math.random().toString(36).slice(2)}`);
-  const processingRef = useRef(false);
   const mountedRef = useRef(true);
+  const processingRef = useRef(false);
+  const elementId = useRef(`beautyvibe-qr-${Math.random().toString(36).slice(2)}`);
 
   const stopScanner = useCallback(async () => {
     const scanner = scannerRef.current;
     if (!scanner) return;
 
     try {
-      if (scanner.isScanning) {
-        await scanner.stop();
-      }
+      if (scanner.isScanning) await scanner.stop();
     } catch (error) {
       console.warn("Scanner stop:", error);
     }
@@ -1600,89 +1655,64 @@ function QRScannerModal({ booking, onClose, onVerified }) {
     } catch {}
 
     scannerRef.current = null;
-    if (mountedRef.current) {
-      setScanning(false);
-    }
   }, []);
 
-  const startScanner = useCallback(
-    async (cameraId) => {
-      if (scannerRef.current) return;
+  const startScanner = useCallback(async (cameraId) => {
+    if (scannerRef.current) return;
 
-      setCameraError("");
-      setCameraReady(false);
-      setScanMessage("Starting camera...");
+    setCameraError("");
+    setCameraReady(false);
 
-      try {
-        const scanner = new Html5Qrcode(elementId.current, {
-          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-          verbose: false,
-        });
+    try {
+      const scanner = new Html5Qrcode(elementId.current, {
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        verbose: false,
+      });
 
-        scannerRef.current = scanner;
+      scannerRef.current = scanner;
 
-        await scanner.start(
-          cameraId ? cameraId : { facingMode: "environment" },
-          {
-            fps: 10,
-            qrbox: (width, height) => {
-              const size = Math.max(150, Math.floor(Math.min(width, height) * 0.7));
-              return {
-                width: Math.min(250, size),
-                height: Math.min(250, size),
-              };
-            },
-            aspectRatio: 1,
-            disableFlip: false,
-          },
-          async (decodedText) => {
-            if (processingRef.current) return;
-            processingRef.current = true;
+      await scanner.start(
+        cameraId || { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 230, height: 230 },
+          aspectRatio: 1,
+        },
+        async (decodedText) => {
+          if (processingRef.current) return;
+          processingRef.current = true;
 
-            if (mountedRef.current) {
-              setProcessing(true);
-              setScanMessage("QR detected. Verifying booking...");
-            }
+          if (mountedRef.current) setProcessing(true);
 
-            try {
-              await stopScanner();
-              await onVerified(decodedText);
-            } catch (error) {
-              console.error("QR verification callback failed:", error);
-            } finally {
-              if (mountedRef.current) {
-                setProcessing(false);
-              }
-            }
-          },
-          () => {}
-        );
+          await stopScanner();
 
-        if (mountedRef.current) {
-          setCameraReady(true);
-          setScanning(true);
-          setScanMessage("Camera active. Scan the customer's QR pass.");
-        }
-      } catch (error) {
-        console.error("Unable to start scanner:", error);
-        scannerRef.current = null;
+          try {
+            await onVerified(booking, decodedText);
+            if (mountedRef.current) onClose();
+          } finally {
+            if (mountedRef.current) setProcessing(false);
+            processingRef.current = false;
+          }
+        },
+        () => {}
+      );
 
-        if (!mountedRef.current) return;
+      if (mountedRef.current) setCameraReady(true);
+    } catch (error) {
+      console.error("QR camera error:", error);
+      scannerRef.current = null;
 
+      if (mountedRef.current) {
         setCameraError(
           error?.name === "NotAllowedError"
-            ? "Camera permission was denied. Allow camera access in your browser settings."
+            ? "Camera permission denied. Allow camera access in browser settings."
             : error?.name === "NotFoundError"
               ? "No camera was found on this device."
-              : error?.name === "NotReadableError"
-                ? "The camera is being used by another application."
-                : "Could not start the camera. Use HTTPS or localhost and allow camera access."
+              : "Unable to start camera. Use HTTPS or localhost and allow camera access."
         );
-        setScanMessage("Camera could not be started.");
       }
-    },
-    [onVerified, stopScanner]
-  );
+    }
+  }, [booking, onClose, onVerified, stopScanner]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1691,10 +1721,12 @@ function QRScannerModal({ booking, onClose, onVerified }) {
       try {
         const cameras = await Html5Qrcode.getCameras();
         if (!mountedRef.current) return;
+
         setCameraList(cameras || []);
 
         const backCamera =
-          cameras?.find((camera) => /back|rear|environment/i.test(camera.label)) || cameras?.[0];
+          cameras?.find((camera) => /back|rear|environment/i.test(camera.label)) ||
+          cameras?.[0];
 
         if (backCamera) {
           setSelectedCamera(backCamera.id);
@@ -1703,9 +1735,10 @@ function QRScannerModal({ booking, onClose, onVerified }) {
           await startScanner("");
         }
       } catch (error) {
-        if (!mountedRef.current) return;
-        console.error("Camera initialization failed:", error);
-        await startScanner("");
+        console.error("Camera initialization error:", error);
+        if (mountedRef.current) {
+          setCameraError("Camera permission or device access is unavailable.");
+        }
       }
     };
 
@@ -1714,13 +1747,18 @@ function QRScannerModal({ booking, onClose, onVerified }) {
     return () => {
       mountedRef.current = false;
       const scanner = scannerRef.current;
+
       if (scanner) {
         if (scanner.isScanning) {
           scanner.stop().catch(() => {}).finally(() => {
-            try { scanner.clear(); } catch {}
+            try {
+              scanner.clear();
+            } catch {}
           });
         } else {
-          try { scanner.clear(); } catch {}
+          try {
+            scanner.clear();
+          } catch {}
         }
         scannerRef.current = null;
       }
@@ -1730,51 +1768,33 @@ function QRScannerModal({ booking, onClose, onVerified }) {
   const changeCamera = async (event) => {
     const cameraId = event.target.value;
     await stopScanner();
-    processingRef.current = false;
-    setProcessing(false);
     setSelectedCamera(cameraId);
-
-    window.setTimeout(() => {
-      if (mountedRef.current) {
-        startScanner(cameraId);
-      }
-    }, 200);
-  };
-
-  const restartScanner = async () => {
-    await stopScanner();
-    processingRef.current = false;
-    setProcessing(false);
     setCameraError("");
 
     window.setTimeout(() => {
-      if (mountedRef.current) {
-        startScanner(selectedCamera);
-      }
+      if (mountedRef.current) startScanner(cameraId);
     }, 200);
   };
 
   return (
     <motion.div
-      className="fixed inset-0 z-[100] flex items-end justify-center bg-[#241B17]/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[120] flex items-end justify-center bg-[#241B17]/70 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
       <motion.section
-        initial={{ opacity: 0, y: 24, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 24, scale: 0.98 }}
-        transition={{ duration: 0.22 }}
+        initial={{ opacity: 0, y: 25 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 25 }}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="scanner-title"
-        className="max-h-[94dvh] w-full max-w-lg overflow-y-auto rounded-t-[24px] border border-[#EEE7E2] bg-white shadow-2xl sm:rounded-[24px]"
+        className="max-h-[94dvh] w-full max-w-lg overflow-y-auto rounded-t-[26px] bg-white shadow-2xl sm:rounded-[26px]"
       >
-        <div className="flex items-center justify-between border-b border-[#F0EAE5] px-5 py-4 sm:px-6">
+        <div className="flex items-center justify-between border-b border-[#F0EAE5] px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#302722] text-white">
               <QrCode size={20} />
@@ -1783,110 +1803,73 @@ function QRScannerModal({ booking, onClose, onVerified }) {
               <p className="text-[10px] font-semibold uppercase tracking-[1.5px] text-[#B66B4B]">
                 BeautyVibe verification
               </p>
-              <h2 id="scanner-title" className="mt-0.5 text-base font-semibold text-[#302722]">
+              <h2 className="text-base font-semibold text-[#302722]">
                 Scan booking pass
               </h2>
             </div>
           </div>
-
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EEE7E2] text-[#8D7F75] transition hover:bg-[#FAF8F6] hover:text-[#302722]"
-            aria-label="Close scanner"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EEE7E2] text-[#8D7F75]"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="px-5 pt-5 sm:px-6">
-          <div className="flex items-center gap-3 rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F8EDE5] text-[#AD6546]">
-              <UserRound size={19} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-[#302722]">{booking.customer}</p>
-              {booking.mobile && (
-                <p className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]">
-                  <Phone size={11} className="text-[#C56E4E]" />
-                  <span>{booking.mobile}</span>
-                </p>
-              )}
-              <p className="mt-1 truncate text-[11px] text-[#8D7F75]">
-                {booking.service} · {booking.id}
+        <div className="p-5 sm:p-6">
+          <div className="mb-4 rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-3">
+            <p className="text-sm font-semibold text-[#302722]">
+              {booking.customer || "Not provided"}
+            </p>
+            <p className="mt-1 text-xs text-[#796B62]">
+              {booking.service} · {booking.id}
+            </p>
+            {booking.mobile && (
+              <p className="mt-1 font-mono text-xs text-[#796B62]">
+                {booking.mobile}
               </p>
-            </div>
-            <StatusBadge status={booking.status} />
+            )}
           </div>
-        </div>
 
-        <div className="px-5 pt-5 sm:px-6">
-          <div className="overflow-hidden rounded-2xl border border-[#3A302A] bg-[#211B18] p-3">
+          <div className="overflow-hidden rounded-2xl bg-[#211B18] p-3">
             <div className="mb-3 flex items-center justify-between px-1">
-              <div className="flex items-center gap-2 text-[10px] font-medium text-white/75">
-                <span className={`h-2 w-2 rounded-full ${cameraReady ? "animate-pulse bg-emerald-400" : "bg-amber-400"}`} />
-                {cameraReady ? "Camera is active" : "Connecting camera"}
-              </div>
+              <span className="flex items-center gap-2 text-[10px] text-white/75">
+                <span className={`h-2 w-2 rounded-full ${cameraReady ? "bg-emerald-400" : "bg-amber-400"}`} />
+                {cameraReady ? "Camera active" : "Connecting camera"}
+              </span>
               <span className="text-[10px] text-white/50">QR READER</span>
             </div>
 
             <div className="relative min-h-[260px] overflow-hidden rounded-xl bg-[#171310]">
-              <div id={elementId.current} className="qr-reader-beautyvibe h-full w-full overflow-hidden" />
-
-              {cameraReady && !processing && (
-                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                  <div className="relative h-[190px] w-[190px] max-w-[80%]">
-                    <span className="absolute left-0 top-0 h-7 w-7 rounded-tl-xl border-l-[3px] border-t-[3px] border-[#E2B08F]" />
-                    <span className="absolute right-0 top-0 h-7 w-7 rounded-tr-xl border-r-[3px] border-t-[3px] border-[#E2B08F]" />
-                    <span className="absolute bottom-0 left-0 h-7 w-7 rounded-bl-xl border-b-[3px] border-l-[3px] border-[#E2B08F]" />
-                    <span className="absolute bottom-0 right-0 h-7 w-7 rounded-br-xl border-b-[3px] border-r-[3px] border-[#E2B08F]" />
-
-                    <motion.div
-                      animate={{ top: ["8%", "92%", "8%"] }}
-                      transition={{ duration: 2.2, repeat: Infinity, ease: "linear" }}
-                      className="absolute left-2 right-2 h-[2px] bg-[#E2B08F] shadow-[0_0_12px_rgba(226,176,143,0.9)]"
-                    />
-                  </div>
-                </div>
-              )}
-
+              <div id={elementId.current} className="w-full overflow-hidden" />
               {processing && (
-                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#211B18]/90 text-center">
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#211B18]/90 text-white">
                   <RefreshCw size={27} className="animate-spin text-[#E2B08F]" />
-                  <p className="mt-3 text-sm font-medium text-white">Verifying pass...</p>
+                  <p className="mt-3 text-sm">Verifying booking...</p>
                 </div>
               )}
             </div>
-
-            <p className="px-1 pb-1 pt-3 text-center text-[11px] leading-5 text-white/65">{scanMessage}</p>
+            <p className="px-1 pt-3 text-center text-[11px] text-white/65">
+              Position the customer's QR code inside the camera frame.
+            </p>
           </div>
 
           {cameraError && (
-            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
-              <div className="flex items-start gap-2">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-600" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-rose-800">Camera unavailable</p>
-                  <p className="mt-1 text-[11px] leading-5 text-rose-700">{cameraError}</p>
-                  <button
-                    type="button"
-                    onClick={restartScanner}
-                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-rose-800 underline underline-offset-2"
-                  >
-                    <RefreshCw size={12} /> Try again
-                  </button>
-                </div>
-              </div>
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-700">
+              {cameraError}
             </div>
           )}
 
           {cameraList.length > 1 && (
             <label className="mt-3 block">
-              <span className="mb-1.5 block text-[11px] font-medium text-[#8D7F75]">Camera source</span>
+              <span className="mb-1.5 block text-[11px] text-[#8D7F75]">
+                Camera source
+              </span>
               <select
                 value={selectedCamera}
                 onChange={changeCamera}
-                className="h-10 w-full rounded-xl border border-[#EEE7E2] bg-white px-3 text-xs text-[#51443B] outline-none focus:border-[#C89A80]"
+                className="h-10 w-full rounded-xl border border-[#EEE7E2] bg-white px-3 text-xs outline-none"
               >
                 {cameraList.map((camera, index) => (
                   <option key={camera.id} value={camera.id}>
@@ -1897,53 +1880,33 @@ function QRScannerModal({ booking, onClose, onVerified }) {
             </label>
           )}
 
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-xl border border-[#EEE7E2] p-3">
-              <p className="text-[10px] text-[#9B8D83]">Appointment date</p>
-              <p className="mt-1.5 text-xs font-medium text-[#51443B]">{booking.datetime}</p>
+          <div className="mt-5 flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-11 flex-1 rounded-xl border border-[#E9E1DA] text-xs font-medium text-[#67574D]"
+            >
+              Close
+            </button>
+            <div className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#302722] text-xs font-medium text-white">
+              <Camera size={15} className="text-[#E2B08F]" />
+              {processing ? "Verifying..." : cameraReady ? "Scanning live" : "Starting camera"}
             </div>
-            <div className="rounded-xl border border-[#EEE7E2] p-3">
-              <p className="text-[10px] text-[#9B8D83]">Booking amount</p>
-              <p className="mt-1.5 text-xs font-semibold text-[#302722]">{formatCurrency(booking.amount)}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 flex gap-3 border-t border-[#F0EAE5] px-5 py-4 sm:px-6">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-11 flex-1 rounded-xl border border-[#E9E1DA] text-xs font-medium text-[#67574D] transition hover:bg-[#FAF8F6]"
-          >
-            Close scanner
-          </button>
-          <div className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#302722] text-xs font-medium text-white">
-            {processing ? <RefreshCw size={15} className="animate-spin" /> : cameraReady ? <ScanLine size={15} className="text-[#E2B08F]" /> : <Camera size={15} />}
-            {processing ? "Verifying..." : scanning ? "Scanning live" : "Starting camera"}
           </div>
         </div>
       </motion.section>
 
       <style>{`
-        .qr-reader-beautyvibe video {
+        #${elementId.current} video {
           width: 100% !important;
-          height: auto !important;
           min-height: 260px;
           max-height: 360px;
           object-fit: cover;
           border-radius: 12px;
         }
-        .qr-reader-beautyvibe canvas,
-        .qr-reader-beautyvibe img {
-          display: none !important;
-        }
         #${elementId.current}__dashboard,
         #${elementId.current}__header_message {
           display: none !important;
-        }
-        #${elementId.current}__scan_region {
-          min-height: 260px;
-          border: 0 !important;
         }
       `}</style>
     </motion.div>
