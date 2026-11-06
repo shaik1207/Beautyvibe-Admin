@@ -25,6 +25,7 @@ import {
   MapPinned,
   Navigation,
   Phone,
+  PhoneCall,
   QrCode,
   RefreshCw,
   Search,
@@ -53,19 +54,25 @@ const isObject = (value) =>
 const clean = (value) => {
   if (value === null || value === undefined) return "";
   if (typeof value !== "string" && typeof value !== "number") return "";
-  
+
   const result = String(value).trim();
   if (!result) return "";
 
   const lower = result.toLowerCase();
-  
+
+  // Exclude placeholder or invalid string patterns
   if (/^(null|undefined|n\/a|na|undefined undefined|null null|valued client)$/.test(lower)) {
     return "";
   }
-  
+
+  // Exclude email addresses from being treated as names
+  if (result.includes("@") && result.includes(".")) {
+    return "";
+  }
+
   if (
-    result.includes("9876543210") || 
-    result === "+91 98765 43210" || 
+    result.includes("9876543210") ||
+    result === "+91 98765 43210" ||
     result === "98765 43210"
   ) {
     return "";
@@ -128,6 +135,9 @@ function formatAddress(value) {
 
   const direct = firstValue(
     value.fullAddress,
+    value.doorstepAddress,
+    value.serviceAddress,
+    value.customerAddress,
     value.address,
     value.formattedAddress,
     value.location
@@ -176,7 +186,7 @@ function getUserAddress(user, appointment) {
 
   if (Array.isArray(addresses)) {
     const selected =
-      addresses.find((item) => item?.isDefault || item?.default) ||
+      addresses.find((item) => item?.isDefault || item?.default || item?.isDefault === 1) ||
       addresses[0];
 
     return formatAddress(selected);
@@ -198,33 +208,49 @@ function getCustomerDetails(item) {
   const customer = isObject(item.customer) ? item.customer : {};
   const details = isObject(item.customerDetails) ? item.customerDetails : {};
 
-  // Extract Name across all possible nested models/fields
+  // Resolve explicit First Name and Last Name first
+  const firstName = firstValue(
+    item.firstName,
+    details.firstName,
+    user.firstName,
+    customer.firstName
+  );
+
+  const lastName = firstValue(
+    item.lastName,
+    details.lastName,
+    user.lastName,
+    customer.lastName
+  );
+
+  const combinedName = [firstName, lastName].filter(Boolean).join(" ").trim();
+
+  // Extract Name strictly prioritizing combined First + Last Name and rejecting Emails
   const fullName = firstValue(
+    combinedName,
     item.customerName,
     item.userName,
     item.name,
+    item.fullName,
     details.name,
+    details.fullName,
     customer.name,
-    user.name,
-    user.fullName,
     customer.fullName,
-    [
-      item.firstName || details.firstName || user.firstName || customer.firstName || "",
-      item.lastName || details.lastName || user.lastName || customer.lastName || "",
-    ].filter(Boolean).join(" "),
-    user.email,
-    customer.email
-  ) || "Walk-in Client";
+    user.name,
+    user.fullName
+  ) || "Valued Client";
 
-  // Extract Mobile Phone across all possible nested models/fields
+  // Extract Mobile Phone number with maximum fallback coverage
   const mobile = firstValue(
     item.mobileNumber,
     item.phone,
     item.phoneNumber,
     item.mobile,
+    item.contact,
     details.mobileNumber,
     details.phone,
     details.mobile,
+    details.contact,
     customer.mobileNumber,
     customer.phone,
     customer.mobile,
@@ -236,6 +262,8 @@ function getCustomerDetails(item) {
   const address = getUserAddress(user, item);
 
   return {
+    firstName,
+    lastName,
     name: fullName,
     mobile,
     address,
@@ -251,12 +279,8 @@ function getCoordinates(item) {
     location.coordinates ||
     location;
 
-  const latitude = Number(
-    coords?.latitude ?? coords?.lat
-  );
-  const longitude = Number(
-    coords?.longitude ?? coords?.lng ?? coords?.long
-  );
+  const latitude = Number(coords?.latitude ?? coords?.lat);
+  const longitude = Number(coords?.longitude ?? coords?.lng ?? coords?.long);
 
   if (
     Number.isFinite(latitude) &&
@@ -277,13 +301,9 @@ function normalizeAppointment(item = {}) {
   const rawId = item._id || item.appointmentId || item.id || "";
   const idString = String(rawId);
 
-  const type = String(
-    item.type || item.serviceType || ""
-  ).toUpperCase();
+  const type = String(item.type || item.serviceType || "").toUpperCase();
 
-  const isHomeService =
-    type === "HOME" ||
-    item.isHomeService === true;
+  const isHomeService = type === "HOME" || item.isHomeService === true;
 
   const status = firstValue(item.status, "Pending");
 
@@ -298,6 +318,8 @@ function normalizeAppointment(item = {}) {
     ),
     passCode: firstValue(item.passCode, item.requestId),
     customer: customer.name,
+    firstName: customer.firstName,
+    lastName: customer.lastName,
     mobile: customer.mobile,
     address: customer.address,
     avatar: customer.avatar,
@@ -346,8 +368,7 @@ function StatusBadge({ status }) {
   return (
     <span
       className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${
-        STATUS_STYLES[status] ||
-        "bg-stone-50 text-stone-600 ring-stone-200"
+        STATUS_STYLES[status] || "bg-stone-50 text-stone-600 ring-stone-200"
       }`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-current" />
@@ -393,7 +414,9 @@ function StatCard({ icon: Icon, label, value, description, iconStyle }) {
             {description}
           </p>
         </div>
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconStyle}`}>
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconStyle}`}
+        >
           <Icon size={19} strokeWidth={1.8} />
         </div>
       </div>
@@ -498,9 +521,7 @@ export default function Appointments() {
     try {
       const response = await API.get("/api/staff");
       const payload =
-        response.data?.data ??
-        response.data?.staff ??
-        response.data;
+        response.data?.data ?? response.data?.staff ?? response.data;
 
       if (!Array.isArray(payload)) {
         setStaffList([]);
@@ -735,10 +756,9 @@ export default function Appointments() {
     setActionLoading(booking._id);
 
     try {
-      await API.patch(
-        `/api/appointments/${booking._id}/assign-staff`,
-        { assignedStaff: staffName }
-      );
+      await API.patch(`/api/appointments/${booking._id}/assign-staff`, {
+        assignedStaff: staffName,
+      });
 
       setAppointments((current) =>
         current.map((item) =>
@@ -790,7 +810,7 @@ export default function Appointments() {
           scannedText.trim();
       }
     } catch {
-      // Plain text QR codes are also supported.
+      // Plain text QR codes are supported
     }
 
     const valid = [
@@ -800,8 +820,7 @@ export default function Appointments() {
     ].some(
       (value) =>
         value &&
-        String(value).toLowerCase() ===
-          String(scannedValue).toLowerCase()
+        String(value).toLowerCase() === String(scannedValue).toLowerCase()
     );
 
     if (!valid) {
@@ -867,7 +886,11 @@ export default function Appointments() {
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#EDE7E2] bg-white px-3 text-xs text-[#6F6259]">
-              <span className={`h-2.5 w-2.5 rounded-full ${socketConnected ? "bg-emerald-500" : "bg-amber-400"}`} />
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${
+                  socketConnected ? "bg-emerald-500" : "bg-amber-400"
+                }`}
+              />
               {socketConnected ? "Live connected" : "Connecting"}
             </div>
 
@@ -985,11 +1008,13 @@ export default function Appointments() {
                     }`}
                   >
                     {tab}
-                    <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
-                      filter === tab
-                        ? "bg-white/15 text-white"
-                        : "bg-[#F4F0EC] text-[#8D7F75]"
-                    }`}>
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                        filter === tab
+                          ? "bg-white/15 text-white"
+                          : "bg-[#F4F0EC] text-[#8D7F75]"
+                      }`}
+                    >
                       {count}
                     </span>
                   </button>
@@ -1025,8 +1050,12 @@ export default function Appointments() {
                   <tr>
                     <td colSpan={7} className="px-5 py-20 text-center">
                       <CalendarDays size={25} className="mx-auto text-[#B66B4B]" />
-                      <p className="mt-4 text-sm font-semibold text-[#302722]">No appointments found</p>
-                      <p className="mt-1 text-xs text-[#9B8D83]">Try another filter or search term.</p>
+                      <p className="mt-4 text-sm font-semibold text-[#302722]">
+                        No appointments found
+                      </p>
+                      <p className="mt-1 text-xs text-[#9B8D83]">
+                        Try another filter or search term.
+                      </p>
                     </td>
                   </tr>
                 ) : (
@@ -1064,13 +1093,22 @@ export default function Appointments() {
                                 </p>
 
                                 {booking.mobile ? (
-                                  <a
-                                    href={`tel:${booking.mobile}`}
-                                    className="mt-1 flex items-center gap-1 font-mono text-[11px] text-[#796B62] hover:text-[#C56E4E]"
-                                  >
-                                    <Phone size={11} />
-                                    {booking.mobile}
-                                  </a>
+                                  <div className="mt-1 flex items-center gap-1.5">
+                                    <a
+                                      href={`tel:${booking.mobile}`}
+                                      className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-[#C56E4E] hover:underline"
+                                    >
+                                      <Phone size={11} />
+                                      {booking.mobile}
+                                    </a>
+                                    <a
+                                      href={`tel:${booking.mobile}`}
+                                      className="inline-flex h-5 items-center gap-1 rounded bg-[#C56E4E]/10 px-1.5 text-[9px] font-bold text-[#C56E4E] transition hover:bg-[#C56E4E] hover:text-white"
+                                      title="Call customer directly"
+                                    >
+                                      <PhoneCall size={9} /> Call
+                                    </a>
+                                  </div>
                                 ) : (
                                   <p className="mt-1 text-[10px] text-[#A09288]">
                                     No phone provided
@@ -1128,7 +1166,9 @@ export default function Appointments() {
                             ) : completed ? (
                               <span className="inline-flex max-w-[170px] items-center gap-1.5 text-xs text-emerald-700">
                                 <ShieldCheck size={14} />
-                                <span className="truncate">{booking.assignedStaff || "Unassigned"}</span>
+                                <span className="truncate">
+                                  {booking.assignedStaff || "Unassigned"}
+                                </span>
                               </span>
                             ) : (
                               <div className="relative w-full max-w-[180px]">
@@ -1167,7 +1207,9 @@ export default function Appointments() {
                                           className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#FAF3EE]"
                                         >
                                           <span>{staff}</span>
-                                          {booking.assignedStaff === staff && <Check size={14} />}
+                                          {booking.assignedStaff === staff && (
+                                            <Check size={14} />
+                                          )}
                                         </button>
                                       ))}
                                     </motion.div>
@@ -1257,7 +1299,9 @@ export default function Appointments() {
               <div className="px-4 py-12 text-center">
                 <CalendarDays size={25} className="mx-auto text-[#B66B4B]" />
                 <p className="mt-3 text-sm font-semibold">No appointments found</p>
-                <p className="mt-1 text-xs text-[#96877D]">Try changing your search or filter.</p>
+                <p className="mt-1 text-xs text-[#96877D]">
+                  Try changing your search or filter.
+                </p>
               </div>
             ) : (
               paginatedAppointments.map((booking) => (
@@ -1276,19 +1320,27 @@ export default function Appointments() {
                           {booking.customer}
                         </p>
                         {booking.mobile ? (
-                          <a
-                            href={`tel:${booking.mobile}`}
-                            className="mt-0.5 flex items-center gap-1 font-mono text-xs text-[#796B62]"
-                          >
-                            <Phone size={12} /> {booking.mobile}
-                          </a>
+                          <div className="mt-1 flex items-center gap-2">
+                            <a
+                              href={`tel:${booking.mobile}`}
+                              className="flex items-center gap-1 font-mono text-xs font-semibold text-[#C56E4E]"
+                            >
+                              <Phone size={12} /> {booking.mobile}
+                            </a>
+                            <a
+                              href={`tel:${booking.mobile}`}
+                              className="inline-flex h-6 items-center gap-1 rounded-full bg-[#C56E4E] px-2.5 text-[10px] font-bold text-white shadow-sm"
+                            >
+                              <PhoneCall size={10} /> Call Now
+                            </a>
+                          </div>
                         ) : (
                           <p className="mt-0.5 text-[10px] text-[#A09288]">
                             No phone provided
                           </p>
                         )}
                         <p className="mt-0.5 font-mono text-[10px] text-[#A09288]">
-                          {booking.id}
+                          ID: {booking.id}
                         </p>
                       </div>
                     </div>
@@ -1299,7 +1351,9 @@ export default function Appointments() {
 
                   <div className="space-y-2 text-xs">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Service</p>
+                      <p className="text-[10px] uppercase tracking-wider text-[#A09288]">
+                        Service
+                      </p>
                       <p className="font-semibold text-[#51443B]">{booking.service}</p>
                     </div>
 
@@ -1327,21 +1381,29 @@ export default function Appointments() {
 
                     <div className="grid grid-cols-2 gap-3 pt-1">
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Amount</p>
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">
+                          Amount
+                        </p>
                         <p className="font-semibold text-[#302722]">
                           {formatCurrency(booking.amount)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Schedule</p>
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">
+                          Schedule
+                        </p>
                         <p className="font-medium text-[#67574D]">{booking.datetime}</p>
                       </div>
                     </div>
 
                     {booking.assignedStaff && (
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">Assigned expert</p>
-                        <p className="font-medium text-[#67574D]">{booking.assignedStaff}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-[#A09288]">
+                          Assigned expert
+                        </p>
+                        <p className="font-medium text-[#67574D]">
+                          {booking.assignedStaff}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -1414,31 +1476,30 @@ export default function Appointments() {
                     )}
                   </div>
 
-                  {booking.status === "Accepted" &&
-                    openDropdownId === booking._id && (
-                      <div className="rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-2">
-                        <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
-                          Select staff member
+                  {booking.status === "Accepted" && openDropdownId === booking._id && (
+                    <div className="rounded-xl border border-[#EEE7E2] bg-[#FCFBFA] p-2">
+                      <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-[#A09288]">
+                        Select staff member
+                      </p>
+                      {staffList.length ? (
+                        staffList.map((staff) => (
+                          <button
+                            type="button"
+                            key={staff}
+                            onClick={() => assignStaff(booking, staff)}
+                            className="flex w-full items-center justify-between rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#F8EFE8]"
+                          >
+                            {staff}
+                            {booking.assignedStaff === staff && <Check size={14} />}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-2 py-3 text-[11px] text-[#9B8D83]">
+                          No staff records found. Add staff in the staff management section.
                         </p>
-                        {staffList.length ? (
-                          staffList.map((staff) => (
-                            <button
-                              type="button"
-                              key={staff}
-                              onClick={() => assignStaff(booking, staff)}
-                              className="flex w-full items-center justify-between rounded-lg px-2 py-2.5 text-left text-[11px] text-[#67574D] hover:bg-[#F8EFE8]"
-                            >
-                              {staff}
-                              {booking.assignedStaff === staff && <Check size={14} />}
-                            </button>
-                          ))
-                        ) : (
-                          <p className="px-2 py-3 text-[11px] text-[#9B8D83]">
-                            No staff records found. Add staff in the staff management section.
-                          </p>
-                        )}
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  )}
                 </motion.article>
               ))
             )}
@@ -1658,62 +1719,65 @@ function QRScannerModal({ booking, onClose, onVerified }) {
     scannerRef.current = null;
   }, []);
 
-  const startScanner = useCallback(async (cameraId) => {
-    if (scannerRef.current) return;
+  const startScanner = useCallback(
+    async (cameraId) => {
+      if (scannerRef.current) return;
 
-    setCameraError("");
-    setCameraReady(false);
+      setCameraError("");
+      setCameraReady(false);
 
-    try {
-      const scanner = new Html5Qrcode(elementId.current, {
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-        verbose: false,
-      });
+      try {
+        const scanner = new Html5Qrcode(elementId.current, {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          verbose: false,
+        });
 
-      scannerRef.current = scanner;
+        scannerRef.current = scanner;
 
-      await scanner.start(
-        cameraId || { facingMode: "environment" },
-        {
-          fps: 10,
-          qrbox: { width: 230, height: 230 },
-          aspectRatio: 1,
-        },
-        async (decodedText) => {
-          if (processingRef.current) return;
-          processingRef.current = true;
+        await scanner.start(
+          cameraId || { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: { width: 230, height: 230 },
+            aspectRatio: 1,
+          },
+          async (decodedText) => {
+            if (processingRef.current) return;
+            processingRef.current = true;
 
-          if (mountedRef.current) setProcessing(true);
+            if (mountedRef.current) setProcessing(true);
 
-          await stopScanner();
+            await stopScanner();
 
-          try {
-            await onVerified(booking, decodedText);
-            if (mountedRef.current) onClose();
-          } finally {
-            if (mountedRef.current) setProcessing(false);
-            processingRef.current = false;
-          }
-        },
-        () => {}
-      );
-
-      if (mountedRef.current) setCameraReady(true);
-    } catch (error) {
-      console.error("QR camera error:", error);
-      scannerRef.current = null;
-
-      if (mountedRef.current) {
-        setCameraError(
-          error?.name === "NotAllowedError"
-            ? "Camera permission denied. Allow camera access in browser settings."
-            : error?.name === "NotFoundError"
-              ? "No camera was found on this device."
-              : "Unable to start camera. Use HTTPS or localhost and allow camera access."
+            try {
+              await onVerified(booking, decodedText);
+              if (mountedRef.current) onClose();
+            } finally {
+              if (mountedRef.current) setProcessing(false);
+              processingRef.current = false;
+            }
+          },
+          () => {}
         );
+
+        if (mountedRef.current) setCameraReady(true);
+      } catch (error) {
+        console.error("QR camera error:", error);
+        scannerRef.current = null;
+
+        if (mountedRef.current) {
+          setCameraError(
+            error?.name === "NotAllowedError"
+              ? "Camera permission denied. Allow camera access in browser settings."
+              : error?.name === "NotFoundError"
+                ? "No camera was found on this device."
+                : "Unable to start camera. Use HTTPS or localhost and allow camera access."
+          );
+        }
       }
-    }
-  }, [booking, onClose, onVerified, stopScanner]);
+    },
+    [booking, onClose, onVerified, stopScanner]
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1836,7 +1900,11 @@ function QRScannerModal({ booking, onClose, onVerified }) {
           <div className="overflow-hidden rounded-2xl bg-[#211B18] p-3">
             <div className="mb-3 flex items-center justify-between px-1">
               <span className="flex items-center gap-2 text-[10px] text-white/75">
-                <span className={`h-2 w-2 rounded-full ${cameraReady ? "bg-emerald-400" : "bg-amber-400"}`} />
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    cameraReady ? "bg-emerald-400" : "bg-amber-400"
+                  }`}
+                />
                 {cameraReady ? "Camera active" : "Connecting camera"}
               </span>
               <span className="text-[10px] text-white/50">QR READER</span>
