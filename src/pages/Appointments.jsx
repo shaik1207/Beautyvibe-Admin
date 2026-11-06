@@ -240,20 +240,23 @@ function getCustomerDetails(item) {
     user.fullName
   ) || "Valued Client";
 
-  // Extract Mobile Phone number with maximum fallback coverage
+  // Comprehensive mobile number lookup across all schema variations and nested objects
   const mobile = firstValue(
     item.mobileNumber,
     item.phone,
     item.phoneNumber,
     item.mobile,
     item.contact,
+    item.customerPhone,
     details.mobileNumber,
     details.phone,
     details.mobile,
     details.contact,
+    details.customerPhone,
     customer.mobileNumber,
     customer.phone,
     customer.mobile,
+    customer.customerPhone,
     user.phone,
     user.mobileNumber,
     user.mobile
