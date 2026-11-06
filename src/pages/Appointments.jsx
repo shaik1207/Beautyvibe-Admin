@@ -30,7 +30,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  UserRound,
   Users,
   X,
 } from "lucide-react";
@@ -51,7 +50,7 @@ const STATUS_STYLES = {
 const isObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-// PERMANENT FIX: Aggressively scrub dummy numbers and broken undefined strings
+// PERMANENT FIX: Scrub broken undefined strings, but ALLOW test data
 const clean = (value) => {
   if (value === null || value === undefined) return "";
   if (typeof value !== "string" && typeof value !== "number") return "";
@@ -64,15 +63,8 @@ const clean = (value) => {
   // 1. Destroy all variations of null/undefined bugs
   if (/^(null|undefined|n\/a|na|undefined undefined|null null)$/.test(lower)) return "";
   
-  // 2. Destroy admin dummy phone numbers so they NEVER appear in the UI
-  if (
-    result.includes("98765") || 
-    lower.includes("dummy") || 
-    result === "+91 98765 43210" || 
-    result === "9876543210"
-  ) {
-    return "";
-  }
+  // NOTE: The aggressive filter for "98765" and "dummy" has been REMOVED here
+  // so your test data will actually render correctly!
 
   return result;
 };
@@ -218,7 +210,7 @@ function getCustomerDetails(item) {
       customer.firstName || "",
       customer.lastName || "",
     ].filter(Boolean).join(" ")
-  ) || "Valued Client"; // Added fallback so it is never blank
+  ) || "Valued Client";
 
   const mobile = firstValue(
     item.mobileNumber,
